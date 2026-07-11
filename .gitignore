@@ -3,3 +3,5 @@ backend/data/*.csv
 __pycache__/
 *.pyc
 .DS_Store
+training-log-predictor-roadmap.md
+interview-talking-points.md
