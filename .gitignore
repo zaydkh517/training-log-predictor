@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 training-log-predictor-roadmap.md
 interview-talking-points.md
+node_modules/

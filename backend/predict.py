@@ -1,6 +1,12 @@
 import numpy as np
 import pandas as pd
 
+# Sanity bound on the 6-month projection: real strength progress decelerates
+# over time, so a short/fast recent window (e.g. catching back up after a
+# layoff) shouldn't get linearly extrapolated into an unrealistic projection.
+# 35% growth or shrinkage over 6 months is generous but bounded.
+MAX_6MO_GROWTH_PCT = 0.35
+
 
 def check_plateau(e1rm_df, exercise_name, threshold=0.02, lookback_sessions=4):
 
@@ -47,8 +53,13 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=6, recent_window_days
 
     current_anchor = data['rolling_e1rm'].iloc[-1]
     point_estimate = current_anchor + slope * (months_ahead * 30)
-    low = point_estimate - 1.5 * residual_std
-    high = point_estimate + 1.5 * residual_std
+    raw_low = point_estimate - 1.5 * residual_std
+    raw_high = point_estimate + 1.5 * residual_std
+
+    floor = max(0, current_anchor * (1 - MAX_6MO_GROWTH_PCT))
+    ceiling = current_anchor * (1 + MAX_6MO_GROWTH_PCT)
+    low = min(max(raw_low, floor), ceiling)
+    high = min(max(raw_high, floor), ceiling)
 
     return {
         'exercise': exercise_name,
