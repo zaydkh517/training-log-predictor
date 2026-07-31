@@ -39,7 +39,7 @@ function TrajectoryChart({ exercise, trajectory, plateau, outlook }: Props) {
   return (
     <div>
       <h2>{exercise}</h2>
-      {plateau.is_plateau && <p>Plateaued</p>}
+      {plateau.is_plateau && <span className="badge badge--warning">Plateaued</span>}
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" />

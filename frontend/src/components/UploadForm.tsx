@@ -29,7 +29,7 @@ function UploadForm({ onAnalyzed }: Props) {
 
   return (
     <form onSubmit={handleSubmit}>
-      <div>
+      <div className="field">
         <label>Strong CSV: </label>
         <input
           type="file"
@@ -37,7 +37,7 @@ function UploadForm({ onAnalyzed }: Props) {
           onChange={(e) => setStrongFile(e.target.files?.[0] ?? null)}
         />
       </div>
-      <div>
+      <div className="field">
         <label>Hevy CSV: </label>
         <input
           type="file"
