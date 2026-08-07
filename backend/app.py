@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 import joblib
@@ -91,10 +91,14 @@ def analyze(
     strong_file: UploadFile | None = File(default=None),
     hevy_file: UploadFile | None = File(default=None),
 ):
-    dataset = build_dataset(
-        strong_path=strong_file.file if strong_file else None,
-        hevy_path=hevy_file.file if hevy_file else None,
-    )
+    try:
+        dataset = build_dataset(
+            strong_path=strong_file.file if strong_file else None,
+            hevy_path=hevy_file.file if hevy_file else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     e1rm_df = dataset["e1rm_df"]
 
     results = {}

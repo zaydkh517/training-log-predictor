@@ -6,6 +6,12 @@ import SessionPlannerForm from './components/SessionPlannerForm'
 function App() {
   const [analysis, setAnalysis] = useState<any>(null)
   const [selectedExercise, setSelectedExercise] = useState<string | null>(null)
+  const [showUpload, setShowUpload] = useState(true)
+
+  function handleAnalyzed(data: any) {
+    setAnalysis(data)
+    setShowUpload(false)
+  }
 
   return (
     <div className="app">
@@ -14,9 +20,13 @@ function App() {
         <p className="app-subtitle">Upload your Strong or Hevy history to see where your lifts are headed.</p>
       </header>
 
-      <div className="card">
-        <UploadForm onAnalyzed={setAnalysis} />
-      </div>
+      {showUpload ? (
+        <div className="card">
+          <UploadForm onAnalyzed={handleAnalyzed} />
+        </div>
+      ) : (
+        <button className="link-button" onClick={() => setShowUpload(true)}>Upload different files</button>
+      )}
 
       {analysis && (
         <select onChange={(e) => setSelectedExercise(e.target.value)}>

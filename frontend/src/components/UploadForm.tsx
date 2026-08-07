@@ -8,10 +8,12 @@ function UploadForm({ onAnalyzed }: Props) {
   const [strongFile, setStrongFile] = useState<File | null>(null)
   const [hevyFile, setHevyFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    setError(null)
 
     const formData = new FormData()
     if (strongFile) formData.append('strong_file', strongFile)
@@ -24,6 +26,11 @@ function UploadForm({ onAnalyzed }: Props) {
     const data = await res.json()
 
     setLoading(false)
+
+    if (!res.ok) {
+      setError(data.detail ?? 'Something went wrong analyzing that file.')
+      return
+    }
     onAnalyzed(data)
   }
 
@@ -48,6 +55,7 @@ function UploadForm({ onAnalyzed }: Props) {
       <button type="submit" disabled={loading}>
         {loading ? 'Analyzing...' : 'Analyze'}
       </button>
+      {error && <p className="error-text">{error}</p>}
     </form>
   )
 }

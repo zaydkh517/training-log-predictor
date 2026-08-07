@@ -1,12 +1,17 @@
 import numpy as np
 import pandas as pd
 
-# Sanity bound on the 6-month projection: real strength progress decelerates
-# over time, so a short/fast recent window (e.g. catching back up after a
-# layoff) shouldn't get linearly extrapolated into an unrealistic projection.
-# 35% growth or shrinkage over 6 months is generous but bounded.
-MAX_6MO_GROWTH_PCT = 0.35
+SLOPE_SHRINKAGE_K = 3
 
+# How far a 6-month outlook is allowed to grow, scaled by training experience
+# on that specific lift (sessions logged for it -- not a cross-dataset
+# comparison, just this person's own history). Novices get closer to
+# MAX_GROWTH_PCT, well-established lifts decay toward MIN_GROWTH_PCT.
+# Grounded in real strength-training research: novices commonly see 20-40%
+# gains over a period like this, well-trained lifters more like 2-6%/year.
+MIN_GROWTH_PCT = 0.05
+MAX_GROWTH_PCT = 0.35
+EXPERIENCE_K = 30
 
 def check_plateau(e1rm_df, exercise_name, threshold=0.02, lookback_sessions=4):
 
@@ -44,22 +49,35 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=6, recent_window_days
     Xr = fit_data['days_since_start'].values.astype(float)
     yr = fit_data['rolling_e1rm'].values.astype(float)
     slope, intercept = np.polyfit(Xr, yr, 1)  # lbs/day, from the recent pace
+    
+    # Shrink the slope toward zero when it's estimated from few recent points . The raw slope is still shown as "your rate"
+    # and used for the uncertainty calc below -- only the forward projection
+    # uses this more conservative, shrunk version.
+    confidence = len(fit_data) / (len(fit_data) + SLOPE_SHRINKAGE_K)
+    projection_slope = slope * confidence
 
-    # uncertainty band from the FULL history's swings around this rate-based line
-    Xf = data['days_since_start'].values.astype(float)
-    yf = data['rolling_e1rm'].values.astype(float)
-    residuals_full = yf - (slope * Xf + intercept)
-    residual_std = residuals_full.std()
+    # uncertainty band from how much the RECENT window actually wiggled around
+    # this fitted line
+    residuals_recent = yr - (slope * Xr + intercept)
+    residual_std = residuals_recent.std()
 
     current_anchor = data['rolling_e1rm'].iloc[-1]
-    point_estimate = current_anchor + slope * (months_ahead * 30)
-    raw_low = point_estimate - 1.5 * residual_std
-    raw_high = point_estimate + 1.5 * residual_std
+    point_estimate = current_anchor + projection_slope * (months_ahead * 30)
 
-    floor = max(0, current_anchor * (1 - MAX_6MO_GROWTH_PCT))
-    ceiling = current_anchor * (1 + MAX_6MO_GROWTH_PCT)
-    low = min(max(raw_low, floor), ceiling)
-    high = min(max(raw_high, floor), ceiling)
+    # Experience-scaled ceiling: fewer sessions logged on this lift -> more
+    # room to grow (novice-tier); many sessions -> tighter ceiling (advanced-tier).
+    n_sessions = len(data)
+    growth_cap_pct = MIN_GROWTH_PCT + (MAX_GROWTH_PCT - MIN_GROWTH_PCT) * EXPERIENCE_K / (n_sessions + EXPERIENCE_K)
+    ceiling = current_anchor * (1 + growth_cap_pct)
+    floor = current_anchor  # never project below where you already are
+
+    # Clamp the CENTER of the range first, then rebuild the +/- uncertainty
+    # band around that clamped center. Clamping low/high independently would
+    # collapse the whole band to a single point whenever the point estimate
+    # overshoots the ceiling -- this keeps a real, honest band width instead.
+    center = min(max(point_estimate, floor), ceiling)
+    low = max(center - 1.5 * residual_std, floor)
+    high = min(center + 1.5 * residual_std, ceiling)
 
     return {
         'exercise': exercise_name,

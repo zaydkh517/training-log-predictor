@@ -209,6 +209,27 @@ select {
   animation: fadeInUp 0.4s var(--ease-flow) both;
 }
 
+.link-button {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 1.5rem 0;
+  color: var(--color-primary);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  width: auto;
+}
+
+.link-button:hover {
+  color: var(--color-primary-hover);
+  filter: none;
+  transform: none;
+  box-shadow: none;
+}
+
 .badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;

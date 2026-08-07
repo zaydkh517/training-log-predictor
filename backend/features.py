@@ -39,7 +39,18 @@ def load_and_clean(strong_path=None, hevy_path=None):
     pieces = []
 
     if strong_path is not None:
-        strong_df = pd.read_csv(strong_path)
+        try:
+            strong_df = pd.read_csv(strong_path)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError):
+            raise ValueError("That Strong file couldn't be read as a CSV -- check it's the right file and isn't empty")
+
+        required = {'Date', 'Exercise Name', 'Weight', 'Reps', 'Set Order'}
+        missing = required - set(strong_df.columns)
+        if missing:
+            raise ValueError(
+                f"This doesn't look like a Strong export -- missing column(s): {', '.join(sorted(missing))}"
+            )
+            
         strong_df['date'] = pd.to_datetime(strong_df['Date'], format='%Y-%m-%d %H:%M:%S')
         strong_df['Exercise Name'] = strong_df['Exercise Name'].replace('Squat (Band)', 'Squat (Barbell)')
 
@@ -53,7 +64,18 @@ def load_and_clean(strong_path=None, hevy_path=None):
         pieces.append(strong_clean)
 
     if hevy_path is not None:
-        hevy_df = pd.read_csv(hevy_path)
+        try:
+            hevy_df = pd.read_csv(hevy_path)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError):
+            raise ValueError("That Hevy file couldn't be read as a CSV -- check it's the right file and isn't empty")
+
+        required = {'start_time', 'exercise_title', 'weight_lbs', 'reps', 'set_index'}
+        missing = required - set(hevy_df.columns)
+        if missing:
+            raise ValueError(
+                f"This doesn't look like a Hevy export -- missing column(s): {', '.join(sorted(missing))}"
+            )
+            
         hevy_df['date'] = pd.to_datetime(hevy_df['start_time'], format='%d %b %Y, %H:%M')
         hevy_df['exercise_title'] = hevy_df['exercise_title'].replace(HEVY_TO_CANONICAL)
 
