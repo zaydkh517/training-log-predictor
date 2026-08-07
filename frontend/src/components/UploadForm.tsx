@@ -1,4 +1,5 @@
 import { useState } from 'react'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 type Props = {
   onAnalyzed: (data: any) => void
@@ -19,7 +20,7 @@ function UploadForm({ onAnalyzed }: Props) {
     if (strongFile) formData.append('strong_file', strongFile)
     if (hevyFile) formData.append('hevy_file', hevyFile)
 
-    const res = await fetch('http://localhost:8000/analyze', {
+    const res = await fetch(`${API_URL}/analyze`, {
       method: 'POST',
       body: formData,
     })

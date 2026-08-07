@@ -1,4 +1,5 @@
 import { useState } from 'react'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 type Props = {
   exercise: string
@@ -24,7 +25,7 @@ function SessionPlannerForm({ exercise, rollingE1rm }: Props) {
       target_max_reps: Number(targetMaxReps),
     }
 
-    const res = await fetch('http://localhost:8000/plan-session', {
+    const res = await fetch(`${API_URL}/plan-session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
