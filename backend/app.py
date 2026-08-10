@@ -53,13 +53,23 @@ class PlanSessionRequest(BaseModel):
             raise ValueError('target_min_reps cannot be greater than target_max_reps')
         return self
 
+SEARCH_BOUND_PCT = 0.20  # never search further than 20% from the prior set's weight
+
+
 def find_best_weight(prior_weight, prior_reps, rolling_e1rm, set_number, target_min, target_max):
     best_weight = None
     best_reps = None
     best_distance = None
 
-    candidate = prior_weight + 10
-    while candidate > 0:
+    # The rep model is only trustworthy near weights that actually follow a
+    # set like this one in the training data. Searching far below the prior
+    # set asks it to extrapolate where its (confounded) fatigue coefficients
+    # produce nonsense -- so the search never leaves +/-20% of the prior weight.
+    # If no in-band weight hits the target range, the best_distance fallback
+    # below returns the closest in-band option instead of a fabricated answer.
+    floor = prior_weight * (1 - SEARCH_BOUND_PCT)
+    candidate = min(prior_weight + 10, prior_weight * (1 + SEARCH_BOUND_PCT))
+    while candidate >= floor:
         features = [
             candidate,
             set_number,
@@ -182,7 +192,13 @@ def plan_session(request: PlanSessionRequest):
             })
             break
 
-        sets.append({"set_number": set_number, "weight": weight, "predicted_reps": reps})
+        set_entry = {"set_number": set_number, "weight": weight, "predicted_reps": reps}
+        if not (request.target_min_reps <= reps <= request.target_max_reps):
+            set_entry["note"] = (
+                "target rep range isn't reachable within 20% of the prior set's "
+                "weight -- showing the closest supported option instead"
+            )
+        sets.append(set_entry)
         prior_weight, prior_reps = weight, reps
 
     return {"exercise": request.exercise, "sets": sets}

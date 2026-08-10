@@ -60,9 +60,10 @@ function SessionPlannerForm({ exercise, rollingE1rm }: Props) {
       {result && result.sets && (
         <ul className="set-list">
           {result.sets.map((set: any) => (
-            <li key={set.set_number} className={set.note ? 'set-row set-row--note' : 'set-row'}>
+            <li key={set.set_number} className={set.weight == null ? 'set-row set-row--note' : 'set-row'}>
               <span>Set {set.set_number}</span>
-              <span>{set.note ?? `${set.weight} lbs × ${set.predicted_reps} reps`}</span>
+              <span>{set.weight != null ? `${set.weight} lbs × ${set.predicted_reps} reps` : set.note}</span>
+              {set.weight != null && set.note && <span className="set-row-note">{set.note}</span>}
             </li>
           ))}
         </ul>
