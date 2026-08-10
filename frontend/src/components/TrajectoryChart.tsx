@@ -6,7 +6,7 @@ type Props = {
   plateau: { is_plateau?: boolean; percent_change?: number }
   outlook: {
     current_smoothed_e1rm_lbs?: number
-    outlook_6mo_range_lbs?: [number, number]
+    outlook_3mo_range_lbs?: [number, number]
     error?: string
   }
 }
@@ -22,12 +22,12 @@ type ChartPoint = {
 function buildChartData(trajectory: Props['trajectory'], outlook: Props['outlook']): ChartPoint[] {
   const data: ChartPoint[] = [...trajectory]
 
-  if (outlook.outlook_6mo_range_lbs && outlook.current_smoothed_e1rm_lbs !== undefined) {
-    const [low, high] = outlook.outlook_6mo_range_lbs
+  if (outlook.outlook_3mo_range_lbs && outlook.current_smoothed_e1rm_lbs !== undefined) {
+    const [low, high] = outlook.outlook_3mo_range_lbs
     const anchor = outlook.current_smoothed_e1rm_lbs
 
     data[data.length - 1] = { ...data[data.length - 1], low: anchor, high: anchor }
-    data.push({ date: '+6 months', low, high })
+    data.push({ date: '+3 months', low, high })
   }
 
   return data

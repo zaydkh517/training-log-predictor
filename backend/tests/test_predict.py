@@ -3,9 +3,8 @@ import pandas as pd
 from predict import (
     check_plateau,
     long_term_outlook,
-    MIN_GROWTH_PCT,
-    MAX_GROWTH_PCT,
-    EXPERIENCE_K,
+    experience_growth_cap,
+    REF_HORIZON_DAYS,
 )
 
 
@@ -44,13 +43,28 @@ def test_outlook_respects_growth_ceiling():
     rolling = [100, 110, 120, 130, 140, 150]
     df = _e1rm_history(rolling)
 
-    result = long_term_outlook(df, 'Bench Press (Barbell)')
+    result = long_term_outlook(df, 'Bench Press (Barbell)')  # default: 3 months
 
-    # recompute the ceiling exactly as predict.py defines it
-    n_sessions = len(rolling)
-    growth_cap = MIN_GROWTH_PCT + (MAX_GROWTH_PCT - MIN_GROWTH_PCT) * EXPERIENCE_K / (n_sessions + EXPERIENCE_K)
+    # recompute the ceiling exactly as predict.py defines it:
+    # 6 weekly sessions -> 35 days of history, cap scaled from the 6-month
+    # reference figures down to the 90-day horizon
+    span_days = 35
+    growth_cap = experience_growth_cap(len(rolling), span_days) * (90 / REF_HORIZON_DAYS)
     ceiling = 150 * (1 + growth_cap)
 
-    low, high = result['outlook_6mo_range_lbs']
+    low, high = result['outlook_3mo_range_lbs']
     assert high <= ceiling + 1e-6
     assert low >= 150  # never projected below current level
+
+
+def test_absurd_horizon_is_bounded_by_data_span():
+    # Ask for a 5-YEAR outlook from 35 days of data. Saturation must stop the
+    # linear trend from extrapolating past the growth implied by the window
+    # it was fit on (slope 10/7 lbs/day over a 35-day span).
+    rolling = [100, 110, 120, 130, 140, 150]
+    df = _e1rm_history(rolling)
+
+    result = long_term_outlook(df, 'Bench Press (Barbell)', months_ahead=60)
+
+    low, high = result['outlook_60mo_range_lbs']
+    assert high <= 150 + (10 / 7) * 35 + 1e-6

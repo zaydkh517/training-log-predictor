@@ -1,17 +1,29 @@
 import numpy as np
 import pandas as pd
 
+# Heuristic constant: with ~3 fitted points the raw slope gets trusted about
+# half; more points -> closer to full trust. Hand-picked, not derived.
 SLOPE_SHRINKAGE_K = 3
 
-# How far a 6-month outlook is allowed to grow, scaled by training experience
-# on that specific lift (sessions logged for it -- not a cross-dataset
-# comparison, just this person's own history). Novices get closer to
-# MAX_GROWTH_PCT, well-established lifts decay toward MIN_GROWTH_PCT.
-# Grounded in real strength-training research: novices commonly see 20-40%
-# gains over a period like this, well-trained lifters more like 2-6%/year.
+# Growth ceiling bounds, stated for a ~6-month reference horizon and scaled
+# to whatever horizon is actually requested. 
 MIN_GROWTH_PCT = 0.05
 MAX_GROWTH_PCT = 0.35
 EXPERIENCE_K = 30
+REF_HORIZON_DAYS = 180  # horizon the research-derived percentages refer to
+
+
+def experience_growth_cap(n_sessions, span_days):
+    """Growth ceiling percentage, scaled by observable experience on this lift.
+
+    Experience is the LARGER of sessions logged and weeks of logged history,
+    so a long, sparse log isn't mistaken for a beginner's. Honest limitation:
+    training done before the person started logging is invisible here -- a
+    10-year lifter with a fresh log still looks novice. Not fixable from log
+    data alone.
+    """
+    experience = max(n_sessions, span_days / 7.0)
+    return MIN_GROWTH_PCT + (MAX_GROWTH_PCT - MIN_GROWTH_PCT) * EXPERIENCE_K / (experience + EXPERIENCE_K)
 
 def check_plateau(e1rm_df, exercise_name, threshold=0.02, lookback_sessions=4):
 
@@ -34,7 +46,7 @@ def check_plateau(e1rm_df, exercise_name, threshold=0.02, lookback_sessions=4):
     }
 
 
-def long_term_outlook(e1rm_df, exercise_name, months_ahead=6, recent_window_days=90):
+def long_term_outlook(e1rm_df, exercise_name, months_ahead=3, recent_window_days=90):
 
     data = e1rm_df[e1rm_df['exercise'] == exercise_name].sort_values('date').copy()
     if len(data) < 4:
@@ -49,25 +61,38 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=6, recent_window_days
     Xr = fit_data['days_since_start'].values.astype(float)
     yr = fit_data['rolling_e1rm'].values.astype(float)
     slope, intercept = np.polyfit(Xr, yr, 1)  # lbs/day, from the recent pace
-    
-    # Shrink the slope toward zero when it's estimated from few recent points . The raw slope is still shown as "your rate"
-    # and used for the uncertainty calc below -- only the forward projection
-    # uses this more conservative, shrunk version.
+
+    # Shrink the slope toward zero when it's estimated from few recent points.
+    # The raw slope is still shown as "your rate" -- only the forward
+    # projection uses this more conservative, shrunk version.
     confidence = len(fit_data) / (len(fit_data) + SLOPE_SHRINKAGE_K)
     projection_slope = slope * confidence
 
-    # uncertainty band from how much the RECENT window actually wiggled around
-    # this fitted line
-    residuals_recent = yr - (slope * Xr + intercept)
-    residual_std = residuals_recent.std()
+    # Uncertainty from how much the RAW session e1RMs scatter around the
+    # fitted trend -- not the rolling average's residuals, which are already
+    # smoothed and make the band flatteringly narrow. This is a heuristic
+    # spread, not a confidence interval, and is labeled as such below.
+    raw_yr = fit_data['e1rm'].values.astype(float)
+    residual_std = (raw_yr - (slope * Xr + intercept)).std()
 
     current_anchor = data['rolling_e1rm'].iloc[-1]
-    point_estimate = current_anchor + projection_slope * (months_ahead * 30)
 
-    # Experience-scaled ceiling: fewer sessions logged on this lift -> more
-    # room to grow (novice-tier); many sessions -> tighter ceiling (advanced-tier).
+    # Never extrapolate the linear trend further than the span of data it was
+    # fit on: projected growth saturates smoothly as the horizon exceeds the
+    # observed window, instead of running linearly into the void.
+    horizon_days = months_ahead * 30
+    fit_span_days = float(Xr.max() - Xr.min())
+    if fit_span_days > 0:
+        effective_days = fit_span_days * (1 - np.exp(-horizon_days / fit_span_days))
+    else:
+        effective_days = 0.0
+    point_estimate = current_anchor + projection_slope * effective_days
+
+    # Experience-scaled ceiling, scaled from its 6-month reference figures to
+    # the actual horizon requested.
     n_sessions = len(data)
-    growth_cap_pct = MIN_GROWTH_PCT + (MAX_GROWTH_PCT - MIN_GROWTH_PCT) * EXPERIENCE_K / (n_sessions + EXPERIENCE_K)
+    span_days = (data['date'].max() - data['date'].min()).days
+    growth_cap_pct = experience_growth_cap(n_sessions, span_days) * (horizon_days / REF_HORIZON_DAYS)
     ceiling = current_anchor * (1 + growth_cap_pct)
     floor = current_anchor  # never project below where you already are
 
@@ -86,4 +111,5 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=6, recent_window_days
         'your_rate_lbs_per_week': float(round(slope * 7, 2)),
         'rate_window': f'last {recent_window_days} days' if len(recent) >= 4 else 'full history (not enough recent data)',
         f'outlook_{months_ahead}mo_range_lbs': (float(round(low, 1)), float(round(high, 1))),
+        'range_basis': 'typical session-to-session variability around the recent trend -- a heuristic spread, not a statistical confidence interval',
     }
