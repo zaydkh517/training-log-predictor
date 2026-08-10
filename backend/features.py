@@ -129,6 +129,8 @@ def build_rep_features(modeling_df, e1rm_df):
     df['prior_set_reps'] = df.groupby(['exercise', 'date'])['reps'].shift(1)
     df['prior_set_weight'] = df.groupby(['exercise', 'date'])['weight'].shift(1)
     df['set_number'] = df.groupby(['exercise', 'date']).cumcount() + 1
+    df['set_volume'] = df['weight'] * df['reps']
+    df['session_volume_so_far'] = df.groupby(['exercise', 'date'])['set_volume'].cumsum() - df['set_volume']
 
     e1rm_lookup = e1rm_df[['exercise', 'date', 'rolling_e1rm']].sort_values('date')
 
