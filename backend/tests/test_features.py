@@ -35,8 +35,7 @@ def test_bodyweight_exercises_excluded():
 
 
 def test_prior_set_features_shift_correctly():
-    # One earlier session (to establish a prior rolling e1RM), then a
-    # three-set session whose prior-set features we check exactly.
+    # one earlier session to establish a rolling e1RM, then a 3-set session
     modeling_df = pd.DataFrame({
         'date': pd.to_datetime(['2026-01-01', '2026-01-08', '2026-01-08', '2026-01-08']),
         'exercise': ['Bench Press (Barbell)'] * 4,
@@ -49,8 +48,7 @@ def test_prior_set_features_shift_correctly():
 
     usable = build_rep_features(modeling_df, e1rm_df)
 
-    # Set 1 of each session has no prior set, and the first-ever session has
-    # no earlier e1RM -- both get dropped. Only sets 2 and 3 of Jan 8 survive.
+    # only sets 2 and 3 of Jan 8 have both a prior set and an earlier e1RM
     assert len(usable) == 2
 
     set2 = usable[usable['set_order'] == 2].iloc[0]
@@ -66,8 +64,7 @@ def test_prior_set_features_shift_correctly():
     assert set2['session_volume_so_far'] == 100.0 * 8
     assert set3['session_volume_so_far'] == 100.0 * 8 + 100.0 * 7
 
-    # rolling_e1rm must come from a STRICTLY earlier date (no same-day leakage):
-    # Jan 1's e1RM = 100 * (1 + 10/30) = 133.33
+    # no same-day leakage: rolling e1RM is Jan 1's alone, 100 * (1 + 10/30)
     assert set2['rolling_e1rm'] == 133.33
 
 

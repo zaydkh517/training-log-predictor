@@ -11,8 +11,7 @@ TARGET = 'reps'
 
 
 def evaluate_rep_model(usable_sets, seed=42, alpha=1.0):
-    """Session-level split (never set-level) -- sets from the same workout are
-    highly correlated fatigue states and must never leak across train/test."""
+    """Split by session, never by set -- sets from one workout share a fatigue state."""
     sessions = usable_sets[['exercise', 'date']].drop_duplicates().sample(frac=1, random_state=seed)
     n_test = int(len(sessions) * 0.2)
     test_sessions = sessions.iloc[:n_test]
@@ -49,7 +48,7 @@ def main():
     for seed in range(5):
         evaluate_rep_model(usable_sets, seed=seed)
 
-    # train the final model on a fixed split and persist it for the Flask API
+    # train the final model on a fixed split and persist it for the API
     final_model = evaluate_rep_model(usable_sets, seed=42)
     joblib.dump(final_model, 'rep_model.joblib')
     print("\nSaved rep_model.joblib")

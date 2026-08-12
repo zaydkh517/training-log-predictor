@@ -2,9 +2,7 @@ from app import find_best_weight, plan_session, PlanSessionRequest
 
 
 def test_weight_search_stays_near_prior_set():
-    # Heavy prior set (225x2 against a 240 e1RM), then a request for 8-12 reps.
-    # An unbounded search dives to absurdly light weights the model has no
-    # data for; the guardrail must keep it within 20% of the prior weight.
+    # heavy prior set: an unbounded search would dive to weights the model has no data for
     prior_weight = 225.0
     weight, reps = find_best_weight(
         prior_weight=prior_weight,
@@ -20,9 +18,7 @@ def test_weight_search_stays_near_prior_set():
 
 
 def test_reachable_target_is_hit_in_band():
-    # Moderate scenario: 100x10 against a 150 e1RM. A wide 6-15 rep target is
-    # comfortably reachable near the prior weight, so the search should return
-    # an in-band weight whose prediction lands inside the target range.
+    # moderate set with a wide target: reachable near the prior weight
     prior_weight = 100.0
     weight, reps = find_best_weight(
         prior_weight=prior_weight,
@@ -38,8 +34,7 @@ def test_reachable_target_is_hit_in_band():
 
 
 def test_unreachable_target_gets_note():
-    # 225x2 first set, then asking for 8-12: not reachable in-band, so the
-    # planned set must carry a note saying the target was missed.
+    # 8-12 reps isn't reachable within 20% of a near-max set -> note required
     request = PlanSessionRequest(
         exercise='Bench Press (Barbell)', rolling_e1rm=240.0, total_sets=2,
         first_set_weight=225.0, target_min_reps=8, target_max_reps=12,

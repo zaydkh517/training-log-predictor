@@ -21,8 +21,7 @@ BODYWEIGHT_EXERCISES = [
     'Inverted Row',
 ]
 
-# Hevy and Strong name some of the same exercises differently. Map Hevy's
-# names onto Strong's so they're treated as the same exercise.
+# map Hevy names onto Strong's so shared exercises line up
 HEVY_TO_CANONICAL = {
     'Chest Fly (Machine)': 'Pec Deck (Machine)',
     'Rear Delt Reverse Fly (Machine)': 'Reverse Fly (Machine)',
@@ -35,7 +34,7 @@ HEVY_TO_CANONICAL = {
 
 
 def load_and_clean(strong_path=None, hevy_path=None):
-    # Either path can be omitted -- most real users only export from one app, not both.
+    # either path can be omitted -- most users only export from one app
     pieces = []
 
     if strong_path is not None:
@@ -50,7 +49,7 @@ def load_and_clean(strong_path=None, hevy_path=None):
             raise ValueError(
                 f"This doesn't look like a Strong export -- missing column(s): {', '.join(sorted(missing))}"
             )
-            
+
         strong_df['date'] = pd.to_datetime(strong_df['Date'], format='%Y-%m-%d %H:%M:%S')
         strong_df['Exercise Name'] = strong_df['Exercise Name'].replace('Squat (Band)', 'Squat (Barbell)')
 
@@ -75,7 +74,7 @@ def load_and_clean(strong_path=None, hevy_path=None):
             raise ValueError(
                 f"This doesn't look like a Hevy export -- missing column(s): {', '.join(sorted(missing))}"
             )
-            
+
         hevy_df['date'] = pd.to_datetime(hevy_df['start_time'], format='%d %b %Y, %H:%M')
         hevy_df['exercise_title'] = hevy_df['exercise_title'].replace(HEVY_TO_CANONICAL)
 
@@ -96,13 +95,13 @@ def load_and_clean(strong_path=None, hevy_path=None):
     return combined
 
 
-#get rid of bodyweight exercises
+# get rid of bodyweight exercises
 def build_modeling_df(combined):
     return combined[~combined['exercise'].isin(BODYWEIGHT_EXERCISES)].copy()
 
-#dataframe of e1rm
+
+# one e1RM per exercise per day (best set), plus a 28-day rolling average
 def build_e1rm_df(modeling_df):
-    
     sorted_df = modeling_df.sort_values(['date', 'exercise', 'weight', 'reps'])
     e1rm_df = sorted_df.drop_duplicates(subset=['date', 'exercise'], keep='last').copy()
 
@@ -116,13 +115,10 @@ def build_e1rm_df(modeling_df):
         .rename(columns={'e1rm': 'rolling_e1rm'})
     )
     e1rm_df = e1rm_df.merge(rolling[['exercise', 'date', 'rolling_e1rm']], on=['exercise', 'date'], how='left')
-
-    e1rm_df['intensity_trend'] = (e1rm_df['weight'] / e1rm_df['rolling_e1rm']).round(4)
     return e1rm_df
 
 
 def build_rep_features(modeling_df, e1rm_df):
-    
     df = modeling_df.dropna(subset=['weight', 'reps']).copy()
     df = df.sort_values(['exercise', 'date', 'set_order']).reset_index(drop=True)
 
@@ -134,8 +130,7 @@ def build_rep_features(modeling_df, e1rm_df):
 
     e1rm_lookup = e1rm_df[['exercise', 'date', 'rolling_e1rm']].sort_values('date')
 
-    # by='exercise' does the per-exercise grouping merge_asof itself -- no manual loop needed.
-    # Both sides must still be sorted by 'date' overall (not by exercise+date) for this to be valid.
+    # merge_asof groups by exercise; both sides must be sorted by date overall
     df = pd.merge_asof(
         df.sort_values('date'), e1rm_lookup,
         on='date', by='exercise', direction='backward', allow_exact_matches=False,
@@ -145,9 +140,7 @@ def build_rep_features(modeling_df, e1rm_df):
     df['weight_pct_e1rm'] = df['weight'] / df['rolling_e1rm']
     df['formula_pred_reps'] = 30 * (df['rolling_e1rm'] / df['weight'] - 1)
 
-    # drop rows that can't actually be used for training or prediction: no prior
-    # set (first set of a session) or no prior e1RM (first-ever session logged
-    # for that exercise) -- plus basic sanity filtering on reps.
+    # drop rows unusable for training: no prior set, no prior e1RM, or nonsense rep counts
     usable = df.dropna(
         subset=['prior_set_reps', 'prior_set_weight', 'rolling_e1rm', 'formula_pred_reps']
     ).copy()
@@ -156,7 +149,6 @@ def build_rep_features(modeling_df, e1rm_df):
 
 
 def build_dataset(strong_path=None, hevy_path=None):
-
     combined = load_and_clean(strong_path, hevy_path)
     modeling_df = build_modeling_df(combined)
     e1rm_df = build_e1rm_df(modeling_df)

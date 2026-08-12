@@ -9,8 +9,7 @@ from predict import (
 
 
 def _e1rm_history(rolling_values, start='2026-01-01', freq='7D'):
-    """Minimal e1rm_df for one exercise: one session per week, with e1rm and
-    rolling_e1rm set directly to the values given."""
+    """Minimal one-exercise e1rm_df: one session per week."""
     dates = pd.date_range(start, periods=len(rolling_values), freq=freq)
     return pd.DataFrame({
         'date': dates,
@@ -45,9 +44,7 @@ def test_outlook_respects_growth_ceiling():
 
     result = long_term_outlook(df, 'Bench Press (Barbell)')  # default: 3 months
 
-    # recompute the ceiling exactly as predict.py defines it:
-    # 6 weekly sessions -> 35 days of history, cap scaled from the 6-month
-    # reference figures down to the 90-day horizon
+    # recompute the ceiling exactly as predict.py does (6 sessions, 35-day span)
     span_days = 35
     growth_cap = experience_growth_cap(len(rolling), span_days) * (90 / REF_HORIZON_DAYS)
     ceiling = 150 * (1 + growth_cap)
@@ -58,9 +55,7 @@ def test_outlook_respects_growth_ceiling():
 
 
 def test_absurd_horizon_is_bounded_by_data_span():
-    # Ask for a 5-YEAR outlook from 35 days of data. Saturation must stop the
-    # linear trend from extrapolating past the growth implied by the window
-    # it was fit on (slope 10/7 lbs/day over a 35-day span).
+    # a 5-year ask can't outgrow the 35-day fitted span (slope 10/7 lbs/day)
     rolling = [100, 110, 120, 130, 140, 150]
     df = _e1rm_history(rolling)
 
