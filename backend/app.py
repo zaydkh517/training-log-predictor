@@ -64,6 +64,12 @@ def find_best_weight(prior_weight, prior_reps, rolling_e1rm, set_number, target_
     # stay within 20% of the prior set -- the model can't extrapolate past its data
     min_weight = prior_weight * (1 - SEARCH_BOUND_PCT)
     candidate = min(prior_weight + 10, prior_weight * (1 + SEARCH_BOUND_PCT))
+
+    # round to the nearest 5 lb so plans use gym-loadable weights
+    snapped = 5 * round(candidate / 5)
+    if snapped >= min_weight:
+        candidate = snapped
+
     while candidate >= min_weight:
         features = [
             candidate,

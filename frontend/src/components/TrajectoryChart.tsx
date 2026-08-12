@@ -42,14 +42,17 @@ function TrajectoryChart({ exercise, trajectory, plateau, outlook }: Props) {
       {plateau.is_plateau && <span className="badge badge--warning">Plateaued</span>}
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis />
-          <Tooltip />
-          <Line type="monotone" dataKey="e1rm" stroke="#8884d8" />
-          <Line type="monotone" dataKey="rolling_e1rm" stroke="#82ca9d" />
-          <Line type="monotone" dataKey="low" stroke="#f4a623" strokeDasharray="5 5" />
-          <Line type="monotone" dataKey="high" stroke="#f4a623" strokeDasharray="5 5" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#262c35" />
+          <XAxis dataKey="date" tick={{ fill: '#9aa3af', fontSize: 12 }} stroke="#333b47" />
+          <YAxis tick={{ fill: '#9aa3af', fontSize: 12 }} stroke="#333b47" />
+          <Tooltip
+            contentStyle={{ background: '#171b21', border: '1px solid #333b47', borderRadius: 8 }}
+            labelStyle={{ color: '#e8eaed' }}
+          />
+          <Line type="monotone" dataKey="e1rm" stroke="#5c6674" dot={false} />
+          <Line type="monotone" dataKey="rolling_e1rm" stroke="#f2a33c" strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="low" stroke="#f2a33c" strokeOpacity={0.5} strokeDasharray="5 5" dot={false} />
+          <Line type="monotone" dataKey="high" stroke="#f2a33c" strokeOpacity={0.5} strokeDasharray="5 5" dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

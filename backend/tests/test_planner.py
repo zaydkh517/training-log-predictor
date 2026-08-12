@@ -33,6 +33,20 @@ def test_reachable_target_is_hit_in_band():
     assert 6 <= reps <= 15
 
 
+def test_weights_are_gym_loadable():
+    # light lift where the 20% cap makes the search start off the 5 lb lattice
+    weight, reps = find_best_weight(
+        prior_weight=30.0,
+        prior_reps=12,
+        rolling_e1rm=45.0,
+        set_number=2,
+        target_min=8,
+        target_max=12,
+    )
+
+    assert weight % 5 == 0
+
+
 def test_unreachable_target_gets_note():
     # 8-12 reps isn't reachable within 20% of a near-max set -> note required
     request = PlanSessionRequest(
