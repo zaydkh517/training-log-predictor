@@ -9,6 +9,12 @@ MAX_GROWTH_PCT = 0.35
 EXPERIENCE_K = 30
 REF_HORIZON_DAYS = 180  # the caps above are stated per ~6 months
 
+PLATEAU_WINDOW_DAYS = 28
+PLATEAU_FRACTION = 0.5          # stalled = under half the gain expected for this training age
+MIN_PLATEAU_THRESHOLD = 0.005   # below +0.5% is noise for anyone
+DECLINE_THRESHOLD = -0.02       # down 2%+ over the window
+INACTIVE_AFTER_DAYS = 45        # not trained in 6+ weeks: don't call it current
+
 
 def experience_growth_cap(n_sessions, span_days):
     """Growth cap for this lift, from sessions logged or weeks of history (whichever is larger)."""
@@ -17,22 +23,53 @@ def experience_growth_cap(n_sessions, span_days):
     return MIN_GROWTH_PCT + (MAX_GROWTH_PCT - MIN_GROWTH_PCT) * EXPERIENCE_K / (experience + EXPERIENCE_K)
 
 
-def check_plateau(e1rm_df, exercise_name, threshold=0.02, lookback_sessions=4):
-    history = e1rm_df[e1rm_df['exercise'] == exercise_name].sort_values('date')
+def days_inactive(e1rm_df, history):
+    """Days between this lift's last session and the newest session anywhere in the log.
+    Measured against the log, not the wall clock, so an old export isn't all 'inactive'."""
+    return int((e1rm_df['date'].max() - history['date'].max()).days)
 
-    if len(history) < lookback_sessions + 1:
-        return {'exercise': exercise_name, 'error': 'not enough sessions to assess yet'}
+
+def check_plateau(e1rm_df, exercise_name, window_days=PLATEAU_WINDOW_DAYS):
+    history = e1rm_df[e1rm_df['exercise'] == exercise_name].sort_values('date')
+    base = {'exercise': exercise_name, 'window_days': window_days}
+
+    idle = days_inactive(e1rm_df, history)
+    if idle > INACTIVE_AFTER_DAYS:
+        return {**base, 'status': 'inactive', 'is_plateau': False, 'days_since_last_session': idle}
+
+    # compare against the last session at least `window_days` before the most recent one:
+    # a fixed span of time, not a fixed number of sessions
+    last_date = history['date'].iloc[-1]
+    past = history[history['date'] <= last_date - pd.Timedelta(days=window_days)]
+    if past.empty:
+        return {**base, 'error': f'needs at least {window_days} days of history to assess'}
 
     recent_rolling = history['rolling_e1rm'].iloc[-1]
-    past_rolling = history['rolling_e1rm'].iloc[-(lookback_sessions + 1)]
+    past_rolling = past['rolling_e1rm'].iloc[-1]
     percent_change = (recent_rolling - past_rolling) / past_rolling
 
+    # "stalled" means well under the gain expected at this training age, not a fixed 2%
+    span_days = (last_date - history['date'].iloc[0]).days
+    expected = experience_growth_cap(len(history), span_days) * (window_days / REF_HORIZON_DAYS)
+    threshold = max(MIN_PLATEAU_THRESHOLD, PLATEAU_FRACTION * expected)
+
+    if percent_change <= DECLINE_THRESHOLD:
+        status = 'declining'
+    elif percent_change < threshold:
+        status = 'plateau'
+    else:
+        status = 'progressing'
+
     return {
-        'exercise': exercise_name,
-        'rolling_e1rm_lookback_sessions_ago': float(round(past_rolling, 2)),
+        **base,
+        'status': status,
+        'window_start': past['date'].iloc[-1].strftime('%Y-%m-%d'),
+        'rolling_e1rm_window_start': float(round(past_rolling, 2)),
         'rolling_e1rm_now': float(round(recent_rolling, 2)),
         'percent_change': float(round(percent_change, 4)),
-        'is_plateau': bool(percent_change < threshold),
+        'threshold_pct': float(round(threshold, 4)),
+        'is_plateau': status in ('plateau', 'declining'),
+        'days_since_last_session': idle,
     }
 
 
@@ -40,6 +77,16 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=3, recent_window_days
     history = e1rm_df[e1rm_df['exercise'] == exercise_name].sort_values('date').copy()
     if len(history) < 4:
         return {'exercise': exercise_name, 'error': 'not enough sessions for a trend line yet'}
+
+    idle = days_inactive(e1rm_df, history)
+    current_level = history['rolling_e1rm'].iloc[-1]
+    if idle > INACTIVE_AFTER_DAYS:
+        # still report the last level, but don't forecast a lift that isn't being trained
+        return {
+            'exercise': exercise_name,
+            'current_smoothed_e1rm_lbs': float(round(current_level, 1)),
+            'error': f'not trained in {idle} days -- no outlook',
+        }
 
     history['days_since_start'] = (history['date'] - history['date'].min()).dt.days
 
@@ -59,8 +106,6 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=3, recent_window_days
     fit_raw = fit_data['e1rm'].values.astype(float)
     residual_std = (fit_raw - (slope * fit_days + intercept)).std()
 
-    current_level = history['rolling_e1rm'].iloc[-1]
-
     # projected growth levels off; never extrapolates past the span it was fit on
     horizon_days = months_ahead * 30
     fit_span_days = float(fit_days.max() - fit_days.min())
@@ -73,8 +118,12 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=3, recent_window_days
     # experience cap, scaled from its 6-month reference to this horizon
     span_days = (history['date'].max() - history['date'].min()).days
     growth_cap_pct = experience_growth_cap(len(history), span_days) * (horizon_days / REF_HORIZON_DAYS)
-    ceiling = current_level * (1 + growth_cap_pct)
-    floor = current_level  # never project below today
+    # the band stays on the trend's side of today: a rising (or flat) trend never projects
+    # below it, a falling one never above it; both are bounded by the experience-scaled limit
+    if projection_slope >= 0:
+        floor, ceiling = current_level, current_level * (1 + growth_cap_pct)
+    else:
+        floor, ceiling = current_level * (1 - growth_cap_pct), current_level
 
     # clamp the center, then rebuild the band around it so it can't collapse to a point
     center = min(max(point_estimate, floor), ceiling)

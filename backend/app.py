@@ -2,11 +2,12 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 import joblib
+import pandas as pd
+
+from features import REP_FEATURES, build_dataset
+from predict import check_plateau, long_term_outlook
 
 rep_model = joblib.load("rep_model.joblib")
-
-from features import build_dataset
-from predict import check_plateau, long_term_outlook
 
 app = FastAPI()
 
@@ -16,6 +17,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+MAX_PLANNED_SETS = 10
+MAX_TARGET_REPS = 30
 
 
 class PredictSetRequest(BaseModel):
@@ -42,10 +47,10 @@ class PredictSetRequest(BaseModel):
 class PlanSessionRequest(BaseModel):
     exercise: str
     rolling_e1rm: float = Field(gt=0)
-    total_sets: int = Field(ge=1)
+    total_sets: int = Field(ge=1, le=MAX_PLANNED_SETS)
     first_set_weight: float = Field(gt=0)
-    target_min_reps: int = Field(ge=1)
-    target_max_reps: int = Field(ge=1)
+    target_min_reps: int = Field(ge=1, le=MAX_TARGET_REPS)
+    target_max_reps: int = Field(ge=1, le=MAX_TARGET_REPS)
 
     @model_validator(mode='after')
     def check_rep_range(self):
@@ -56,30 +61,55 @@ class PlanSessionRequest(BaseModel):
 SEARCH_BOUND_PCT = 0.20
 
 
+def epley_reps(weight, rolling_e1rm):
+    """Reps a fresh lifter could do at `weight`, from the Epley formula inverted."""
+    return 30 * (rolling_e1rm / weight - 1)
+
+
+def predict_reps(weight, set_number, prior_reps, prior_weight, rolling_e1rm):
+    """Ridge prediction for a later set, capped at what a fresh lifter could do.
+
+    The model's fatigue coefficients point the wrong way (good days inflate every set),
+    so uncapped it can ramp weight set over set past 100% of e1RM. A fatigued set
+    can't beat a fresh one, so the Epley value is a hard physical ceiling.
+    """
+    features = pd.DataFrame([[
+        weight, set_number, prior_reps, prior_weight, rolling_e1rm, weight / rolling_e1rm,
+    ]], columns=REP_FEATURES)
+    predicted = float(rep_model.predict(features)[0])
+    return max(0.0, min(predicted, epley_reps(weight, rolling_e1rm)))
+
+
+def snap_to_plates(weight):
+    """Round to the nearest 5 lb so plans use gym-loadable weights."""
+    return 5 * round(weight / 5)
+
+
+def weight_for_reps(rolling_e1rm, reps):
+    """Epley inverted the other way: the weight that should allow `reps` fresh reps."""
+    return rolling_e1rm / (1 + reps / 30)
+
+
 def find_best_weight(prior_weight, prior_reps, rolling_e1rm, set_number, target_min, target_max):
+    """Heaviest gym-loadable weight within 20% of the prior set that the model expects
+    to land in the target range; otherwise the closest miss."""
     best_weight = None
     best_reps = None
     best_distance = None
 
-    # stay within 20% of the prior set -- the model can't extrapolate past its data
+    # stay within 20% of the prior set -- the model can't extrapolate past its data --
+    # and never search above the lifter's estimated max
     min_weight = prior_weight * (1 - SEARCH_BOUND_PCT)
-    candidate = min(prior_weight + 10, prior_weight * (1 + SEARCH_BOUND_PCT))
+    candidate = min(prior_weight * (1 + SEARCH_BOUND_PCT), rolling_e1rm)
 
-    # round to the nearest 5 lb so plans use gym-loadable weights
-    snapped = 5 * round(candidate / 5)
-    if snapped >= min_weight:
+    snapped = snap_to_plates(candidate)
+    if min_weight <= snapped <= candidate:
         candidate = snapped
+    elif snapped - 5 >= min_weight:
+        candidate = snapped - 5
 
     while candidate >= min_weight:
-        features = [
-            candidate,
-            set_number,
-            prior_reps,
-            prior_weight,
-            rolling_e1rm,
-            candidate / rolling_e1rm,
-        ]
-        predicted_reps = rep_model.predict([features])[0]
+        predicted_reps = predict_reps(candidate, set_number, prior_reps, prior_weight, rolling_e1rm)
 
         if target_min <= predicted_reps <= target_max:
             return candidate, round(predicted_reps)
@@ -133,7 +163,7 @@ def analyze(
 @app.post("/predict-set")
 def predict_set(request: PredictSetRequest):
     if request.prior_set_reps is None:
-        predicted_reps = 30 * (request.rolling_e1rm / request.weight - 1)
+        predicted_reps = epley_reps(request.weight, request.rolling_e1rm)
         if predicted_reps <= 0:
             return {
                 "exercise": request.exercise,
@@ -147,27 +177,22 @@ def predict_set(request: PredictSetRequest):
             "method": "formula",
         }
     else:
-        features = [
-            request.weight,
-            request.set_number,
-            request.prior_set_reps,
-            request.prior_set_weight,
-            request.rolling_e1rm,
-            request.weight / request.rolling_e1rm,
-        ]
-        predicted_reps = rep_model.predict([features])[0]
+        predicted_reps = predict_reps(
+            request.weight, request.set_number, request.prior_set_reps,
+            request.prior_set_weight, request.rolling_e1rm,
+        )
         return {
             "exercise": request.exercise,
             "predicted_reps": round(predicted_reps),
             "method": "ridge_model",
         }
-        
+
+
 @app.post("/plan-session")
 def plan_session(request: PlanSessionRequest):
     sets = []
 
-    first_reps = 30 * (request.rolling_e1rm / request.first_set_weight - 1)
-    first_reps = max(0, round(first_reps))
+    first_reps = max(0, round(epley_reps(request.first_set_weight, request.rolling_e1rm)))
 
     if first_reps == 0:
         return {
@@ -175,7 +200,15 @@ def plan_session(request: PlanSessionRequest):
             "error": "starting weight is at or above your estimated one-rep max -- pick a lighter starting weight",
         }
 
-    sets.append({"set_number": 1, "weight": request.first_set_weight, "predicted_reps": first_reps})
+    first_set = {"set_number": 1, "weight": request.first_set_weight, "predicted_reps": first_reps}
+    if not (request.target_min_reps <= first_reps <= request.target_max_reps):
+        mid_target = (request.target_min_reps + request.target_max_reps) / 2
+        suggested = snap_to_plates(weight_for_reps(request.rolling_e1rm, mid_target))
+        first_set["note"] = (
+            f"this starting weight puts you outside your target range -- "
+            f"try about {suggested} lb to start"
+        )
+    sets.append(first_set)
 
     prior_weight = request.first_set_weight
     prior_reps = first_reps
@@ -186,7 +219,7 @@ def plan_session(request: PlanSessionRequest):
             request.target_min_reps, request.target_max_reps,
         )
 
-        if reps == 0:
+        if reps <= 0:
             sets.append({
                 "set_number": set_number,
                 "note": "predicted to fail this set -- stopping the plan here",

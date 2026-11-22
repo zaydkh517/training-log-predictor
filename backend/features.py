@@ -33,6 +33,13 @@ HEVY_TO_CANONICAL = {
 }
 
 
+KG_TO_LB = 2.20462
+MAX_RELIABLE_REPS = 12
+
+# inputs to the set-level rep model, in the order it was trained on
+REP_FEATURES = ['weight', 'set_number', 'prior_set_reps', 'prior_set_weight', 'rolling_e1rm', 'weight_pct_e1rm']
+
+
 def load_and_clean(strong_path=None, hevy_path=None):
     # either path can be omitted -- most users only export from one app
     pieces = []
@@ -53,6 +60,11 @@ def load_and_clean(strong_path=None, hevy_path=None):
         strong_df['date'] = pd.to_datetime(strong_df['Date'], format='%Y-%m-%d %H:%M:%S')
         strong_df['Exercise Name'] = strong_df['Exercise Name'].replace('Squat (Band)', 'Squat (Barbell)')
 
+        # some Strong exports carry a per-row unit; without one, Weight is assumed to be lb
+        if 'Weight Unit' in strong_df.columns:
+            is_kg = strong_df['Weight Unit'].astype(str).str.strip().str.lower().isin(['kg', 'kgs'])
+            strong_df.loc[is_kg, 'Weight'] = pd.to_numeric(strong_df.loc[is_kg, 'Weight'], errors='coerce') * KG_TO_LB
+
         strong_clean = strong_df.rename(columns={
             'Exercise Name': 'exercise',
             'Weight': 'weight',
@@ -68,8 +80,12 @@ def load_and_clean(strong_path=None, hevy_path=None):
         except (pd.errors.EmptyDataError, pd.errors.ParserError):
             raise ValueError("That Hevy file couldn't be read as a CSV -- check it's the right file and isn't empty")
 
-        required = {'start_time', 'exercise_title', 'weight_lbs', 'reps', 'set_index'}
+        # Hevy names the weight column after the user's unit setting
+        weight_col = next((c for c in ('weight_lbs', 'weight_kg') if c in hevy_df.columns), None)
+        required = {'start_time', 'exercise_title', 'reps', 'set_index'}
         missing = required - set(hevy_df.columns)
+        if weight_col is None:
+            missing.add('weight_lbs or weight_kg')
         if missing:
             raise ValueError(
                 f"This doesn't look like a Hevy export -- missing column(s): {', '.join(sorted(missing))}"
@@ -77,11 +93,16 @@ def load_and_clean(strong_path=None, hevy_path=None):
 
         hevy_df['date'] = pd.to_datetime(hevy_df['start_time'], format='%d %b %Y, %H:%M')
         hevy_df['exercise_title'] = hevy_df['exercise_title'].replace(HEVY_TO_CANONICAL)
+        hevy_df['weight'] = pd.to_numeric(hevy_df[weight_col], errors='coerce')
+        if weight_col == 'weight_kg':
+            hevy_df['weight'] *= KG_TO_LB
+
+        # warm-ups aren't working sets: they'd never be the best set, but they'd pollute prior-set features
+        if 'set_type' in hevy_df.columns:
+            hevy_df = hevy_df[hevy_df['set_type'].astype(str).str.lower() != 'warmup']
 
         hevy_clean = hevy_df.rename(columns={
             'exercise_title': 'exercise',
-            'weight_lbs': 'weight',
-            'reps': 'reps',
             'set_index': 'set_order',
         })[['date', 'exercise', 'weight', 'reps', 'set_order']]
         hevy_clean['source'] = 'hevy'
@@ -95,17 +116,27 @@ def load_and_clean(strong_path=None, hevy_path=None):
     return combined
 
 
-# get rid of bodyweight exercises
 def build_modeling_df(combined):
-    return combined[~combined['exercise'].isin(BODYWEIGHT_EXERCISES)].copy()
+    """Loaded strength sets only: drops bodyweight moves and rows with no usable weight x reps
+    (cardio, timed holds, blank sets), which would otherwise turn into NaN or zero e1RMs."""
+    df = combined[~combined['exercise'].isin(BODYWEIGHT_EXERCISES)].copy()
+    df['weight'] = pd.to_numeric(df['weight'], errors='coerce')
+    df['reps'] = pd.to_numeric(df['reps'], errors='coerce')
+    df['set_order'] = pd.to_numeric(df['set_order'], errors='coerce')
+    return df[(df['weight'] > 0) & (df['reps'] > 0)].copy()
 
 
-# one e1RM per exercise per day (best set), plus a 28-day rolling average
 def build_e1rm_df(modeling_df):
-    sorted_df = modeling_df.sort_values(['date', 'exercise', 'weight', 'reps'])
-    e1rm_df = sorted_df.drop_duplicates(subset=['date', 'exercise'], keep='last').copy()
+    """One e1RM per exercise per session -- the set with the highest Epley estimate --
+    plus a 28-day rolling average."""
+    df = modeling_df.copy()
+    df['e1rm'] = (df['weight'] * (1 + df['reps'] / 30)).round(2)
 
-    e1rm_df['e1rm'] = (e1rm_df['weight'] * (1 + e1rm_df['reps'] / 30)).round(2)
+    # Epley overestimates past ~12 reps, so a high-rep set only counts when it's all the session has
+    df['reliable'] = df['reps'] <= MAX_RELIABLE_REPS
+    df = df.sort_values(['date', 'exercise', 'reliable', 'e1rm'])
+    e1rm_df = df.drop_duplicates(subset=['date', 'exercise'], keep='last').drop(columns='reliable')
+    e1rm_df = e1rm_df.sort_values(['exercise', 'date']).copy()
 
     rolling = (
         e1rm_df.groupby('exercise')
@@ -151,6 +182,8 @@ def build_rep_features(modeling_df, e1rm_df):
 def build_dataset(strong_path=None, hevy_path=None):
     combined = load_and_clean(strong_path, hevy_path)
     modeling_df = build_modeling_df(combined)
+    if modeling_df.empty:
+        raise ValueError("No weighted sets found -- the file only has bodyweight, cardio or empty sets")
     e1rm_df = build_e1rm_df(modeling_df)
     usable_sets = build_rep_features(modeling_df, e1rm_df)
     return {

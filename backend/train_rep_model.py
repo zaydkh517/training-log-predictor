@@ -4,9 +4,7 @@ from sklearn.metrics import mean_absolute_error
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from features import build_dataset
-
-FEATURES = ['weight', 'set_number', 'prior_set_reps', 'prior_set_weight', 'rolling_e1rm', 'weight_pct_e1rm']
+from features import REP_FEATURES as FEATURES, build_dataset
 TARGET = 'reps'
 
 
@@ -48,8 +46,9 @@ def main():
     for seed in range(5):
         evaluate_rep_model(usable_sets, seed=seed)
 
-    # train the final model on a fixed split and persist it for the API
-    final_model = evaluate_rep_model(usable_sets, seed=42)
+    # the splits above are for measuring; the shipped model learns from every session
+    final_model = make_pipeline(StandardScaler(), Ridge(alpha=1.0))
+    final_model.fit(usable_sets[FEATURES], usable_sets[TARGET])
     joblib.dump(final_model, 'rep_model.joblib')
     print("\nSaved rep_model.joblib")
 

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from features import build_e1rm_df, build_modeling_df, build_rep_features, load_and_clean
+from features import KG_TO_LB, build_dataset, build_e1rm_df, build_modeling_df, build_rep_features, load_and_clean
 
 
 def test_e1rm_formula():
@@ -79,3 +79,72 @@ def test_strong_csv_missing_columns_rejected(tmp_path):
 def test_no_files_rejected():
     with pytest.raises(ValueError):
         load_and_clean()
+
+def _sets(rows):
+    """rows: (date, exercise, weight, reps); set_order counts up within each session."""
+    df = pd.DataFrame(rows, columns=['date', 'exercise', 'weight', 'reps'])
+    df['date'] = pd.to_datetime(df['date'])
+    df['set_order'] = df.groupby(['date', 'exercise']).cumcount() + 1
+    df['source'] = 'strong'
+    return df
+
+
+def test_best_set_is_highest_e1rm_not_heaviest():
+    # 225x2 (e1RM 240) is heavier, but 205x8 (e1RM 259.67) is the stronger set
+    df = _sets([('2026-01-01', 'Bench Press (Barbell)', 225.0, 2),
+                ('2026-01-01', 'Bench Press (Barbell)', 205.0, 8)])
+    result = build_e1rm_df(df)
+    assert result['e1rm'].iloc[0] == round(205 * (1 + 8 / 30), 2)
+
+
+def test_high_rep_set_only_counts_when_alone():
+    # 100x20 has a bigger Epley number than 135x5, but Epley isn't trustworthy at 20 reps
+    mixed = _sets([('2026-01-01', 'Bench Press (Barbell)', 135.0, 5),
+                   ('2026-01-01', 'Bench Press (Barbell)', 100.0, 20)])
+    assert build_e1rm_df(mixed)['reps'].iloc[0] == 5
+
+    only_high = _sets([('2026-01-01', 'Bench Press (Barbell)', 100.0, 20)])
+    assert build_e1rm_df(only_high)['reps'].iloc[0] == 20
+
+
+def test_cardio_and_blank_rows_dropped():
+    df = _sets([('2026-01-01', 'Running', 0.0, 0),
+                ('2026-01-01', 'Treadmill', float('nan'), float('nan')),
+                ('2026-01-01', 'Bench Press (Barbell)', 135.0, 8)])
+    result = build_modeling_df(df)
+    assert list(result['exercise']) == ['Bench Press (Barbell)']
+
+
+def test_only_cardio_is_a_clear_error(tmp_path):
+    csv = tmp_path / 'strong.csv'
+    csv.write_text(
+        'Date,Workout Name,Duration,Exercise Name,Set Order,Weight,Reps,Distance,Seconds,RPE\n'
+        '2026-01-01 10:00:00,Run,30m,Running,1,0,0,3,1800,\n'
+    )
+    with pytest.raises(ValueError, match='No weighted sets'):
+        build_dataset(strong_path=csv)
+
+
+HEVY_HEADER = ('"title","start_time","end_time","description","exercise_title","superset_id",'
+               '"exercise_notes","set_index","set_type","{weight_col}","reps","distance_miles",'
+               '"duration_seconds","rpe"\n')
+
+
+def _hevy_row(set_type, weight, reps):
+    return (f'"Push","1 Jan 2026, 10:00","1 Jan 2026, 11:00","","Bench Press (Barbell)",,"",0,'
+            f'"{set_type}",{weight},{reps},,,\n')
+
+
+def test_hevy_kg_export_converted_to_lb(tmp_path):
+    csv = tmp_path / 'hevy.csv'
+    csv.write_text(HEVY_HEADER.format(weight_col='weight_kg') + _hevy_row('normal', 100, 5))
+    result = load_and_clean(hevy_path=csv)
+    assert result['weight'].iloc[0] == pytest.approx(100 * KG_TO_LB)
+
+
+def test_hevy_warmups_excluded(tmp_path):
+    csv = tmp_path / 'hevy.csv'
+    csv.write_text(HEVY_HEADER.format(weight_col='weight_lbs')
+                   + _hevy_row('warmup', 95, 10) + _hevy_row('normal', 185, 5))
+    result = load_and_clean(hevy_path=csv)
+    assert list(result['weight']) == [185]
