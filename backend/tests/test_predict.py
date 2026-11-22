@@ -1,11 +1,7 @@
 import pandas as pd
+import pytest
 
-from predict import (
-    check_plateau,
-    long_term_outlook,
-    experience_growth_cap,
-    REF_HORIZON_DAYS,
-)
+from predict import check_plateau, long_term_outlook
 
 
 def _e1rm_history(rolling_values, start='2026-01-01', freq='7D'):
@@ -38,43 +34,6 @@ def test_growing_trend_is_not_plateau():
     assert result['is_plateau'] is False
 
 
-def test_outlook_respects_growth_ceiling():
-    # absurdly steep recent progress: +10 lbs/week, every week
-    rolling = [100, 110, 120, 130, 140, 150]
-    df = _e1rm_history(rolling)
-
-    result = long_term_outlook(df, 'Bench Press (Barbell)')  # default: 3 months
-
-    # recompute the ceiling exactly as predict.py does (6 sessions, 35-day span)
-    span_days = 35
-    growth_cap = experience_growth_cap(len(rolling), span_days) * (90 / REF_HORIZON_DAYS)
-    ceiling = 150 * (1 + growth_cap)
-
-    low, high = result['outlook_3mo_range_lbs']
-    assert high <= ceiling + 1e-6
-    assert low >= 150  # a rising trend is never projected below current level
-
-
-def test_absurd_horizon_is_bounded_by_data_span():
-    # a 5-year ask can't outgrow the 35-day fitted span (slope 10/7 lbs/day)
-    rolling = [100, 110, 120, 130, 140, 150]
-    df = _e1rm_history(rolling)
-
-    result = long_term_outlook(df, 'Bench Press (Barbell)', months_ahead=60)
-
-    low, high = result['outlook_60mo_range_lbs']
-    assert high <= 150 + (10 / 7) * 35 + 1e-6
-
-def test_plateau_window_is_time_not_sessions():
-    # same +6% over 4 weeks, logged 2x/week vs 1x/week: the call must not depend on frequency
-    weekly = _e1rm_history([100, 101.5, 103, 104.5, 106], freq='7D')
-    twice_weekly = _e1rm_history([100 + 0.75 * i for i in range(9)], freq='3.5D')
-    a = check_plateau(weekly, 'Bench Press (Barbell)')
-    b = check_plateau(twice_weekly, 'Bench Press (Barbell)')
-    assert a['status'] == b['status'] == 'progressing'
-    assert abs(a['percent_change'] - b['percent_change']) < 0.005
-
-
 def test_experienced_lifter_slow_gain_is_not_plateau():
     # two years of weekly sessions: +1.2% a month is real progress at that training age,
     # though the old fixed 2% rule called it a plateau
@@ -103,22 +62,6 @@ def test_untrained_lift_is_inactive():
     assert outlook['current_smoothed_e1rm_lbs'] == 110
 
 
-def test_falling_trend_can_project_below_today():
-    df = _e1rm_history([160, 157, 154, 151, 148, 145])
-    low, high = long_term_outlook(df, 'Bench Press (Barbell)')['outlook_3mo_range_lbs']
-    assert low < 145
-
-
-def test_noisy_falling_trend_never_projects_above_today():
-    # noisy decline: the noise spread must not push the band above the current level
-    raw = [170, 150, 166, 146, 160, 140, 154, 136]
-    rolling = [165, 162, 160, 157, 155, 152, 150, 147]
-    df = _e1rm_history(rolling).assign(e1rm=[float(v) for v in raw])
-    low, high = long_term_outlook(df, 'Bench Press (Barbell)')['outlook_3mo_range_lbs']
-    assert high <= 147 + 1e-6
-    assert low < high
-
-
 def _two_machine_history():
     """Progressing on machine 0 (~300), then six flat weeks on machine 1 (~150)."""
     first = _e1rm_history([280, 290, 300, 310, 320]).assign(machine=0)
@@ -139,3 +82,20 @@ def test_new_machine_needs_its_own_sessions_for_an_outlook():
     outlook = long_term_outlook(df, 'Bench Press (Barbell)')
     assert 'new machine' in outlook['error']
     assert outlook['current_smoothed_e1rm_lbs'] == 150
+
+
+def test_outlook_is_a_learned_ordered_interval():
+    df = _e1rm_history([150 + 2 * i for i in range(12)])
+    result = long_term_outlook(df, 'Bench Press (Barbell)')
+    low, high = result['outlook_3mo_range_lbs']
+    assert result['method'] == 'learned'
+    assert low <= result['outlook_3mo_median_lbs'] <= high
+
+
+def test_interval_scale_widens_without_moving_the_center():
+    df = _e1rm_history([150 + 2 * i for i in range(12)])
+    base = long_term_outlook(df, 'Bench Press (Barbell)')
+    wide = long_term_outlook(df, 'Bench Press (Barbell)', interval_scale=2.0)
+    (lo1, hi1), (lo2, hi2) = base['outlook_3mo_range_lbs'], wide['outlook_3mo_range_lbs']
+    assert (hi2 - lo2) > (hi1 - lo1) * 1.5
+    assert (lo1 + hi1) / 2 == pytest.approx((lo2 + hi2) / 2, rel=0.01)

@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 
-SLOPE_SHRINKAGE_K = 3  # fewer fitted points -> trust less of the slope
+from forecast import forecast_lift, load_model
+
+RATE_WINDOW_DAYS = 90  # window for the displayed lbs/week trend
 
 # growth ceilings: novices gain ~20-40% per 6 months, trained lifters ~2-6%/year
 MIN_GROWTH_PCT = 0.05
@@ -87,9 +89,10 @@ def check_plateau(e1rm_df, exercise_name, window_days=PLATEAU_WINDOW_DAYS):
     }
 
 
-def long_term_outlook(e1rm_df, exercise_name, months_ahead=3, recent_window_days=90):
+def long_term_outlook(e1rm_df, exercise_name, interval_scale=1.0, model=None):
+    """3-month outlook from the learned forecaster (see forecast.py), for the machine the
+    lift was last done on. `interval_scale` widens the 80% interval for this lifter."""
     full, history = lift_history(e1rm_df, exercise_name)
-    history = history.copy()
     if len(full) < 4:
         return {'exercise': exercise_name, 'error': 'not enough sessions for a trend line yet'}
 
@@ -102,61 +105,34 @@ def long_term_outlook(e1rm_df, exercise_name, months_ahead=3, recent_window_days
             'current_smoothed_e1rm_lbs': float(round(current_level, 1)),
             'error': f'not trained in {idle} days -- no outlook',
         }
-    if len(history) < 4:
+    forecast = forecast_lift(model or load_model(), full, history, interval_scale)
+    if forecast is None:
         return {
             'exercise': exercise_name,
             'current_smoothed_e1rm_lbs': float(round(current_level, 1)),
             'error': 'new machine -- not enough sessions on it for a trend yet',
         }
+    low, median, high = forecast
 
-    history['days_since_start'] = (history['date'] - history['date'].min()).dt.days
-
-    cutoff = history['date'].max() - pd.Timedelta(days=recent_window_days)
+    # the displayed rate: a plain trend over the last 90 days on this machine
+    cutoff = history['date'].max() - pd.Timedelta(days=RATE_WINDOW_DAYS)
     recent = history[history['date'] >= cutoff]
     fit_data = recent if len(recent) >= 4 else history
-
-    fit_days = fit_data['days_since_start'].values.astype(float)
-    fit_rolling = fit_data['rolling_e1rm'].values.astype(float)
-    slope, intercept = np.polyfit(fit_days, fit_rolling, 1)  # lbs/day
-
-    # shrink the slope when it was fit on few points
-    slope_trust = len(fit_data) / (len(fit_data) + SLOPE_SHRINKAGE_K)
-    projection_slope = slope * slope_trust
-
-    # band width from raw session scatter (rolling values are pre-smoothed)
-    fit_raw = fit_data['e1rm'].values.astype(float)
-    residual_std = (fit_raw - (slope * fit_days + intercept)).std()
-
-    # projected growth levels off; never extrapolates past the span it was fit on
-    horizon_days = months_ahead * 30
-    fit_span_days = float(fit_days.max() - fit_days.min())
-    if fit_span_days > 0:
-        effective_days = fit_span_days * (1 - np.exp(-horizon_days / fit_span_days))
-    else:
-        effective_days = 0.0
-    point_estimate = current_level + projection_slope * effective_days
-
-    # experience cap (all machines), scaled from its 6-month reference to this horizon
-    span_days = (full['date'].max() - full['date'].min()).days
-    growth_cap_pct = experience_growth_cap(len(full), span_days) * (horizon_days / REF_HORIZON_DAYS)
-    # the band stays on the trend's side of today: a rising (or flat) trend never projects
-    # below it, a falling one never above it; both are bounded by the experience-scaled limit
-    if projection_slope >= 0:
-        floor, ceiling = current_level, current_level * (1 + growth_cap_pct)
-    else:
-        floor, ceiling = current_level * (1 - growth_cap_pct), current_level
-
-    # clamp the center, then rebuild the band around it so it can't collapse to a point
-    center = min(max(point_estimate, floor), ceiling)
-    low = max(center - 1.5 * residual_std, floor)
-    high = min(center + 1.5 * residual_std, ceiling)
+    days = (fit_data['date'] - fit_data['date'].min()).dt.days.to_numpy(dtype=float)
+    slope = np.polyfit(days, fit_data['rolling_e1rm'].to_numpy(dtype=float), 1)[0] if days.max() > 0 else 0.0
 
     return {
         'exercise': exercise_name,
         'raw_last_session_e1rm_lbs': float(history['e1rm'].iloc[-1]),
         'current_smoothed_e1rm_lbs': float(round(current_level, 1)),
         'your_rate_lbs_per_week': float(round(slope * 7, 2)),
-        'rate_window': f'last {recent_window_days} days' if len(recent) >= 4 else 'full history (not enough recent data)',
-        f'outlook_{months_ahead}mo_range_lbs': (float(round(low, 1)), float(round(high, 1))),
-        'range_basis': 'typical session-to-session variability around the recent trend -- a heuristic spread, not a statistical confidence interval',
+        'rate_window': f'last {RATE_WINDOW_DAYS} days' if len(recent) >= 4 else 'full history (not enough recent data)',
+        'outlook_3mo_range_lbs': (float(round(low, 1)), float(round(high, 1))),
+        'outlook_3mo_median_lbs': float(round(median, 1)),
+        'method': 'learned',
+        'interval_scale': float(round(interval_scale, 2)),
+        'range_basis': (
+            '80% prediction interval from a model trained on 1.2M meet-to-meet changes '
+            '(OpenPowerlifting), widened to match how well it has forecast your own history'
+        ),
     }

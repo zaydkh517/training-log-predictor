@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from features import build_dataset
+from forecast import interval_scale, load_model
 from predict import check_plateau, long_term_outlook
 from rep_model import FEATURES as REP_MODEL_FEATURES, MAX_WEIGHT_CHANGE, RepModel, epley_reps, fit_personal
 
@@ -150,6 +151,8 @@ def analyze(
     e1rm_df = dataset["e1rm_df"]
     # fit the rep model to this lifter (falls back to the default on short histories)
     rep_model = fit_personal(dataset["usable_sets"], DEFAULT_REP_MODEL)
+    # widen the forecast interval to match how the model has done on this lifter's own past
+    scale, n_backtests = interval_scale(load_model(), e1rm_df)
 
     results = {}
     for exercise in e1rm_df["exercise"].unique():
@@ -166,11 +169,15 @@ def analyze(
             "trajectory": trajectory,
             "current_machine": int(history["machine"].iloc[-1]),
             "machine_count": int(history["machine"].nunique()),
-            "outlook": long_term_outlook(e1rm_df, exercise),
+            "outlook": long_term_outlook(e1rm_df, exercise, interval_scale=scale),
             "plateau": check_plateau(e1rm_df, exercise),
         }
 
-    return {"exercises": results, "rep_model": rep_model.to_dict()}
+    return {
+        "exercises": results,
+        "rep_model": rep_model.to_dict(),
+        "forecast_calibration": {"interval_scale": round(scale, 2), "backtests": n_backtests},
+    }
 
 @app.post("/predict-set")
 def predict_set(request: PredictSetRequest):
