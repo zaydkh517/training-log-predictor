@@ -1,6 +1,6 @@
 import type { ExerciseAnalysis } from '../types'
 import { useCountUp } from '../hooks/useCountUp'
-import { fmtLong, lbs, parseDay, signed, signedPct, splitExerciseName, trendOf } from '../lib/format'
+import { TREND_LABEL, fmtLong, lbs, parseDay, signed, signedPct, splitExerciseName, trendOf } from '../lib/format'
 
 type Props = { exercise: string; data: ExerciseAnalysis }
 
@@ -27,9 +27,7 @@ function LiftHeader({ exercise, data }: Props) {
         </div>
         <div className={`status status-${trend}`}>
           <span className="status-dot" aria-hidden />
-          {trend === 'up' && 'Progressing'}
-          {trend === 'flat' && 'Plateau'}
-          {trend === 'unknown' && 'Building baseline'}
+          {TREND_LABEL[trend]}
         </div>
       </div>
 
@@ -43,12 +41,15 @@ function LiftHeader({ exercise, data }: Props) {
           <span className="stat-note mono">28-day smoothed</span>
         </div>
         <div className="stat">
-          <dt>Last 4 sessions</dt>
+          <dt>Last {plateau.window_days ?? 28} days</dt>
           <dd className={`trend-${trend}`}>
             <span className="display-sm">{signedPct(plateau.percent_change)}</span>
           </dd>
           <span className="stat-note mono">
-            {plateau.error ?? (plateau.is_plateau ? 'under +2% threshold' : 'above +2% threshold')}
+            {plateau.error ??
+              (trend === 'inactive'
+                ? `last trained ${plateau.days_since_last_session} days ago`
+                : `stall line ${signedPct(plateau.threshold_pct)} for your training age`)}
           </span>
         </div>
         <div className="stat">
@@ -77,8 +78,15 @@ function LiftHeader({ exercise, data }: Props) {
 
       {trend === 'flat' && (
         <p className="callout">
-          <strong>Stalled.</strong> Your smoothed e1RM moved {signedPct(plateau.percent_change)} over the last 4
-          sessions. Common fixes: change the rep range, add a back-off set, or take a deload week.
+          <strong>Stalled.</strong> Your smoothed e1RM moved {signedPct(plateau.percent_change)} over the last{' '}
+          {plateau.window_days} days, under the {signedPct(plateau.threshold_pct)} expected at your training age.
+          Common fixes: change the rep range, add a back-off set, or take a deload week.
+        </p>
+      )}
+      {trend === 'down' && (
+        <p className="callout">
+          <strong>Dropping.</strong> Your smoothed e1RM is down {signedPct(plateau.percent_change)} over the last{' '}
+          {plateau.window_days} days. If you're not in a cut, check sleep, recovery and total training volume.
         </p>
       )}
     </header>

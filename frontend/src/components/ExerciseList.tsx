@@ -83,10 +83,12 @@ function ExerciseList({ analysis, selected, onSelect }: Props) {
                 <span className="lift-row-right">
                   <span className="lift-row-value mono">{lbs(currentE1rm(ex))}</span>
                   <span className={`lift-row-delta mono trend-${trend}`}>
-                    {trend === 'unknown' ? 'new' : signedPct(ex.plateau.percent_change)}
+                    {trend === 'unknown' ? 'new'
+                      : trend === 'inactive' ? `${ex.plateau.days_since_last_session}d idle`
+                      : signedPct(ex.plateau.percent_change)}
                   </span>
                 </span>
-                <Sparkline values={ex.trajectory.map((p) => p.rolling_e1rm)} flat={trend === 'flat'} />
+                <Sparkline values={ex.trajectory.map((p) => p.rolling_e1rm)} flat={trend === 'flat' || trend === 'down'} />
               </button>
             </li>
           )

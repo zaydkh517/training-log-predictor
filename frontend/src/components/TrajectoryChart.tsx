@@ -64,8 +64,8 @@ function TrajectoryChart({ exercise, data }: Props) {
       endT = lastT + 90 * DAY
       points.push({ t: endT, band, projected: true })
     }
-    // the plateau check compares against the session 4 back
-    const plateauStartT = plateau.is_plateau ? all[Math.max(0, all.length - 5)]?.t : undefined
+    // shade the window the plateau check actually compared across
+    const plateauStartT = plateau.is_plateau && plateau.window_start ? parseDay(plateau.window_start) : undefined
     return { points, lastT, endT, plateauStartT }
   }, [trajectory, outlook, plateau, range])
 
@@ -85,7 +85,7 @@ function TrajectoryChart({ exercise, data }: Props) {
             <li><i className="swatch swatch-line" />Smoothed e1RM</li>
             <li><i className="swatch swatch-dot" />Session best</li>
             {outlook.outlook_3mo_range_lbs && <li><i className="swatch swatch-band" />3-mo outlook</li>}
-            {plateauStartT !== undefined && <li><i className="swatch swatch-warn" />Plateau window</li>}
+            {plateauStartT !== undefined && <li><i className="swatch swatch-warn" />{plateau.status === 'declining' ? 'Decline' : 'Plateau'} window</li>}
           </ul>
         </div>
         <div className="segmented" role="tablist" aria-label="Time range">

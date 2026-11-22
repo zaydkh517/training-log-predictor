@@ -424,7 +424,8 @@ h1, h2, h3, p { margin: 0; }
 .lift-row.is-active .spark.is-flat polyline, .lift-row:hover .spark.is-flat polyline { stroke: var(--warn); }
 
 .trend-up { color: var(--accent); }
-.trend-flat { color: var(--warn); }
+.trend-flat, .trend-down { color: var(--warn); }
+.trend-inactive { color: var(--text-dim); }
 .trend-unknown { color: var(--text-dim); }
 
 .lift-detail { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
@@ -460,7 +461,8 @@ h1, h2, h3, p { margin: 0; }
 .status-up { color: var(--accent); border-color: rgba(255, 45, 70, 0.35); background: var(--accent-soft); }
 .status-up .status-dot { animation: pulse 2s ease-out infinite; }
 .status-flat { color: var(--warn); border-color: rgba(255, 176, 32, 0.4); background: var(--warn-soft); }
-.status-unknown { color: var(--text-muted); border-color: var(--line-strong); }
+.status-down { color: var(--warn); border-color: rgba(255, 176, 32, 0.4); background: var(--warn-soft); }
+.status-unknown, .status-inactive { color: var(--text-muted); border-color: var(--line-strong); }
 
 .stat-strip {
   margin: 0;

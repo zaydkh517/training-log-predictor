@@ -38,11 +38,23 @@ export function parseDay(iso: string) {
 export const fmtShort = (t: number) => shortDate.format(t)
 export const fmtLong = (t: number) => longDate.format(t)
 
-export type Trend = 'up' | 'flat' | 'unknown'
+export type Trend = 'up' | 'flat' | 'down' | 'inactive' | 'unknown'
+
+const TREND_BY_STATUS = { progressing: 'up', plateau: 'flat', declining: 'down', inactive: 'inactive' } as const
 
 export function trendOf(ex: ExerciseAnalysis): Trend {
-  if (ex.plateau.is_plateau === undefined) return 'unknown'
-  return ex.plateau.is_plateau ? 'flat' : 'up'
+  if (ex.plateau.status) return TREND_BY_STATUS[ex.plateau.status]
+  // older API responses only carried the boolean
+  if (ex.plateau.is_plateau !== undefined) return ex.plateau.is_plateau ? 'flat' : 'up'
+  return 'unknown'
+}
+
+export const TREND_LABEL: Record<Trend, string> = {
+  up: 'Progressing',
+  flat: 'Plateau',
+  down: 'Declining',
+  inactive: 'Inactive',
+  unknown: 'Building baseline',
 }
 
 export function currentE1rm(ex: ExerciseAnalysis) {

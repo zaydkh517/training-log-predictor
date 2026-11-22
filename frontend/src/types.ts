@@ -1,10 +1,15 @@
 export type TrajectoryPoint = { date: string; e1rm: number; rolling_e1rm: number }
 
 export type Plateau = {
+  status?: 'progressing' | 'plateau' | 'declining' | 'inactive'
   is_plateau?: boolean
   percent_change?: number
+  threshold_pct?: number
+  window_days?: number
+  window_start?: string
   rolling_e1rm_now?: number
-  rolling_e1rm_lookback_sessions_ago?: number
+  rolling_e1rm_window_start?: number
+  days_since_last_session?: number
   error?: string
 }
 
