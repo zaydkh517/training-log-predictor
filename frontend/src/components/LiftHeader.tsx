@@ -1,6 +1,6 @@
 import type { ExerciseAnalysis } from '../types'
 import { useCountUp } from '../hooks/useCountUp'
-import { TREND_LABEL, fmtLong, lbs, parseDay, signed, signedPct, splitExerciseName, trendOf } from '../lib/format'
+import { TREND_LABEL, fmtLong, lbs, machineLabel, parseDay, signed, signedPct, splitExerciseName, trendOf } from '../lib/format'
 
 type Props = { exercise: string; data: ExerciseAnalysis }
 
@@ -22,6 +22,9 @@ function LiftHeader({ exercise, data }: Props) {
             {equipment && <>{equipment} · </>}
             {trajectory.length} sessions
             {first && last && <> · {fmtLong(parseDay(first.date))} – {fmtLong(parseDay(last.date))}</>}
+            {(data.machine_count ?? 1) > 1 && data.current_machine !== undefined && (
+              <> · stats for {machineLabel(data.current_machine)} of {data.machine_count}</>
+            )}
           </p>
           <h1 className="lift-title">{name}</h1>
         </div>

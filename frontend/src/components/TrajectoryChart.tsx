@@ -4,7 +4,7 @@ import {
   type TooltipProps,
 } from 'recharts'
 import type { ExerciseAnalysis } from '../types'
-import { fmtLong, fmtShort, lbs, parseDay } from '../lib/format'
+import { fmtLong, fmtShort, lbs, machineLabel, parseDay } from '../lib/format'
 
 type Props = { exercise: string; data: ExerciseAnalysis }
 
@@ -49,15 +49,23 @@ function ChartTooltip({ active, payload }: TooltipProps<number, string>) {
 function TrajectoryChart({ exercise, data }: Props) {
   const { trajectory, outlook, plateau } = data
   const [range, setRange] = useState<RangeKey>('ALL')
+  // a machine choice belongs to one lift; switching lifts falls back to that lift's current machine
+  const [picked, setPicked] = useState<{ exercise: string; machine: number } | null>(null)
+  const current = data.current_machine ?? 0
+  const machineCount = data.machine_count ?? 1
+  const machine = picked?.exercise === exercise ? picked.machine : current
+  const onCurrent = machine === current
 
   const { points, lastT, endT, plateauStartT } = useMemo(() => {
-    const all: ChartPoint[] = trajectory.map((p) => ({ t: parseDay(p.date), e1rm: p.e1rm, rolling: p.rolling_e1rm }))
+    const all: ChartPoint[] = trajectory
+      .filter((p) => (p.machine ?? 0) === machine)
+      .map((p) => ({ t: parseDay(p.date), e1rm: p.e1rm, rolling: p.rolling_e1rm }))
     const lastT = all[all.length - 1]?.t ?? 0
     const days = RANGES.find((r) => r.key === range)!.days
     const points = all.filter((p) => lastT - p.t <= days * DAY)
 
     let endT = lastT
-    const band = outlook.outlook_3mo_range_lbs
+    const band = onCurrent ? outlook.outlook_3mo_range_lbs : undefined
     if (band && outlook.current_smoothed_e1rm_lbs !== undefined && points.length) {
       const anchor = outlook.current_smoothed_e1rm_lbs
       points[points.length - 1] = { ...points[points.length - 1], band: [anchor, anchor] }
@@ -65,9 +73,9 @@ function TrajectoryChart({ exercise, data }: Props) {
       points.push({ t: endT, band, projected: true })
     }
     // shade the window the plateau check actually compared across
-    const plateauStartT = plateau.is_plateau && plateau.window_start ? parseDay(plateau.window_start) : undefined
+    const plateauStartT = onCurrent && plateau.is_plateau && plateau.window_start ? parseDay(plateau.window_start) : undefined
     return { points, lastT, endT, plateauStartT }
-  }, [trajectory, outlook, plateau, range])
+  }, [trajectory, outlook, plateau, range, machine, onCurrent])
 
   const firstT = points[0]?.t ?? 0
   const accent = css('--accent') || '#ff2d46'
@@ -84,10 +92,28 @@ function TrajectoryChart({ exercise, data }: Props) {
           <ul className="legend mono">
             <li><i className="swatch swatch-line" />Smoothed e1RM</li>
             <li><i className="swatch swatch-dot" />Session best</li>
-            {outlook.outlook_3mo_range_lbs && <li><i className="swatch swatch-band" />3-mo outlook</li>}
+            {onCurrent && outlook.outlook_3mo_range_lbs && <li><i className="swatch swatch-band" />3-mo outlook</li>}
             {plateauStartT !== undefined && <li><i className="swatch swatch-warn" />{plateau.status === 'declining' ? 'Decline' : 'Plateau'} window</li>}
           </ul>
         </div>
+        <div className="chart-controls">
+        {machineCount > 1 && (
+          <div className="segmented" role="tablist" aria-label="Machine">
+            {Array.from({ length: machineCount }, (_, id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={machine === id}
+                title={id === current ? `${machineLabel(id)} (current)` : machineLabel(id)}
+                className={machine === id ? 'is-on' : ''}
+                onClick={() => setPicked({ exercise, machine: id })}
+              >
+                {String.fromCharCode(65 + id)}{id === current && <span className="tab-dot" aria-hidden />}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="segmented" role="tablist" aria-label="Time range">
           {RANGES.map((r) => (
             <button
@@ -102,12 +128,19 @@ function TrajectoryChart({ exercise, data }: Props) {
             </button>
           ))}
         </div>
+        </div>
       </div>
+      {machineCount > 1 && (
+        <p className="machine-note">
+          Logged on {machineCount} different machines. Pounds aren&rsquo;t comparable between them, so each is
+          tracked on its own. Showing {machineLabel(machine)}{onCurrent ? ' (current)' : ''}.
+        </p>
+      )}
 
       <div className="chart-wrap">
         <ResponsiveContainer width="100%" height="100%">
           {/* remount per lift/range: Recharts' tween between series of different lengths can stall */}
-          <ComposedChart key={`${exercise}:${range}`} data={points} margin={{ top: 12, right: 8, bottom: 0, left: -8 }}>
+          <ComposedChart key={`${exercise}:${machine}:${range}`} data={points} margin={{ top: 12, right: 8, bottom: 0, left: -8 }}>
             <defs>
               <linearGradient id="rollFill" x1="0" x2="0" y1="0" y2="1">
                 <stop offset="0" stopColor={accent} stopOpacity={0.22} />
@@ -156,7 +189,7 @@ function TrajectoryChart({ exercise, data }: Props) {
         </ResponsiveContainer>
       </div>
 
-      {outlook.range_basis && <p className="footnote">Outlook band: {outlook.range_basis}.</p>}
+      {onCurrent && outlook.range_basis && <p className="footnote">Outlook band: {outlook.range_basis}.</p>}
     </section>
   )
 }

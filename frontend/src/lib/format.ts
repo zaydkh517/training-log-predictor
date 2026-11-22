@@ -57,6 +57,15 @@ export const TREND_LABEL: Record<Trend, string> = {
   unknown: 'Building baseline',
 }
 
+export const machineLabel = (id: number) => `Machine ${String.fromCharCode(65 + id)}`
+
+/** Sessions on the machine the lift was last done on: the only ones a trend can use. */
+export function currentMachineTrajectory(ex: ExerciseAnalysis) {
+  return ex.current_machine === undefined
+    ? ex.trajectory
+    : ex.trajectory.filter((p) => (p.machine ?? 0) === ex.current_machine)
+}
+
 export function currentE1rm(ex: ExerciseAnalysis) {
   return ex.outlook.current_smoothed_e1rm_lbs ?? ex.trajectory[ex.trajectory.length - 1]?.rolling_e1rm
 }

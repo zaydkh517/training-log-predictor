@@ -1,4 +1,5 @@
-export type TrajectoryPoint = { date: string; e1rm: number; rolling_e1rm: number }
+/** `machine` separates sessions on different machines, whose pounds aren't comparable. */
+export type TrajectoryPoint = { date: string; e1rm: number; rolling_e1rm: number; machine?: number }
 
 export type Plateau = {
   status?: 'progressing' | 'plateau' | 'declining' | 'inactive'
@@ -25,11 +26,24 @@ export type Outlook = {
 
 export type ExerciseAnalysis = {
   trajectory: TrajectoryPoint[]
+  current_machine?: number
+  machine_count?: number
   plateau: Plateau
   outlook: Outlook
 }
 
-export type Analysis = { exercises: Record<string, ExerciseAnalysis> }
+/** Linear rep-model correction returned by /analyze; sent back verbatim when planning. */
+export type RepModelParams = {
+  mean: number[]
+  scale: number[]
+  coef: number[]
+  intercept: number
+  source: 'default' | 'personal'
+  n_sets: number
+  features: string[]
+}
+
+export type Analysis = { exercises: Record<string, ExerciseAnalysis>; rep_model?: RepModelParams }
 
 export type PlannedSet = {
   set_number: number

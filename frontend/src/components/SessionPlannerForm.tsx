@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { API_URL, lbs } from '../lib/format'
-import type { PlannedSet } from '../types'
+import type { PlannedSet, RepModelParams } from '../types'
 
 type Props = {
   exercise: string
   rollingE1rm: number
+  repModel?: RepModelParams
 }
 
 function Stepper({ label, value, onChange, step, min, max, unit }: {
@@ -41,7 +42,7 @@ function Stepper({ label, value, onChange, step, min, max, unit }: {
   )
 }
 
-function SessionPlannerForm({ exercise, rollingE1rm }: Props) {
+function SessionPlannerForm({ exercise, rollingE1rm, repModel }: Props) {
   // default to ~75% of e1RM: a typical working weight, so the first click is useful
   const [totalSets, setTotalSets] = useState('4')
   const [firstSetWeight, setFirstSetWeight] = useState(String(5 * Math.round((rollingE1rm * 0.75) / 5)))
@@ -66,6 +67,7 @@ function SessionPlannerForm({ exercise, rollingE1rm }: Props) {
           first_set_weight: Number(firstSetWeight),
           target_min_reps: Number(targetMinReps),
           target_max_reps: Number(targetMaxReps),
+          rep_model: repModel,
         }),
       })
       const data = await res.json()
@@ -95,7 +97,13 @@ function SessionPlannerForm({ exercise, rollingE1rm }: Props) {
       <div className="panel-head">
         <div>
           <h2 className="label">Next session planner</h2>
-          <p className="panel-sub">Set 1 uses the Epley formula. Later sets come from a ridge model trained on your set history, adjusted to keep you in range.</p>
+          <p className="panel-sub">
+            Set 1 uses the Epley formula. Each later set carries your previous set&rsquo;s strength to the new
+            weight, then applies a learned fatigue correction{' '}
+            {repModel?.source === 'personal'
+              ? <>fitted to <b className="accent">{repModel.n_sets} of your sets</b>.</>
+              : <>from the default model (log more sets to personalize it).</>}
+          </p>
         </div>
       </div>
 

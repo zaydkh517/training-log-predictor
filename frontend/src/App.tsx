@@ -65,7 +65,7 @@ function App() {
             <div className="lift-detail">
               <LiftHeader exercise={selected} data={current} />
               <TrajectoryChart exercise={selected} data={current} />
-              {e1rm !== undefined && <SessionPlannerForm key={selected} exercise={selected} rollingE1rm={e1rm} />}
+              {e1rm !== undefined && <SessionPlannerForm key={selected} exercise={selected} rollingE1rm={e1rm} repModel={analysis.rep_model} />}
             </div>
           )}
         </main>

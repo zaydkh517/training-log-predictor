@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Analysis } from '../types'
-import { currentE1rm, lbs, signedPct, splitExerciseName, trendOf } from '../lib/format'
+import { currentE1rm, currentMachineTrajectory, lbs, signedPct, splitExerciseName, trendOf } from '../lib/format'
 
 type Props = {
   analysis: Analysis
@@ -88,7 +88,7 @@ function ExerciseList({ analysis, selected, onSelect }: Props) {
                       : signedPct(ex.plateau.percent_change)}
                   </span>
                 </span>
-                <Sparkline values={ex.trajectory.map((p) => p.rolling_e1rm)} flat={trend === 'flat' || trend === 'down'} />
+                <Sparkline values={currentMachineTrajectory(ex).map((p) => p.rolling_e1rm)} flat={trend === 'flat' || trend === 'down'} />
               </button>
             </li>
           )
