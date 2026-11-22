@@ -1,5 +1,5 @@
 venv/
-backend/data/*.csv
+backend/data/
 __pycache__/
 *.pyc
 .DS_Store
