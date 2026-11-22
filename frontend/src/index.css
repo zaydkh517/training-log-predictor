@@ -510,6 +510,7 @@ h1, h2, h3, p { margin: 0; }
 .swatch-line { width: 14px; height: 3px; background: var(--accent); border-radius: 2px; }
 .swatch-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
 .swatch-band { width: 12px; height: 10px; border: 1px dashed var(--accent); background: repeating-linear-gradient(45deg, rgba(255, 45, 70, 0.35) 0 1.5px, transparent 1.5px 4px); }
+.swatch-median { width: 14px; height: 0; border-top: 2px dotted var(--accent); }
 .swatch-warn { width: 12px; height: 10px; background: var(--warn-soft); border: 1px dashed var(--warn); }
 
 .segmented { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-raise); flex: none; }

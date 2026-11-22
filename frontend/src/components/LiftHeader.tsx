@@ -75,7 +75,11 @@ function LiftHeader({ exercise, data }: Props) {
               <span className="display-sm dim">—</span>
             )}
           </dd>
-          <span className="stat-note mono">{range ? 'heuristic range' : outlook.error}</span>
+          <span className="stat-note mono">
+            {range
+              ? `80% range · median ${lbs(outlook.outlook_3mo_median_lbs)}`
+              : outlook.error}
+          </span>
         </div>
       </dl>
 

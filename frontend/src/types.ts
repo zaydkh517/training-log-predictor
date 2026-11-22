@@ -20,6 +20,9 @@ export type Outlook = {
   your_rate_lbs_per_week?: number
   rate_window?: string
   outlook_3mo_range_lbs?: [number, number]
+  outlook_3mo_median_lbs?: number
+  method?: 'learned'
+  interval_scale?: number
   range_basis?: string
   error?: string
 }

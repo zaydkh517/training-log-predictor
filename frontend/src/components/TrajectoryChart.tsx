@@ -13,6 +13,7 @@ type ChartPoint = {
   e1rm?: number
   rolling?: number
   band?: [number, number]
+  median?: number
   projected?: boolean
 }
 
@@ -40,7 +41,10 @@ function ChartTooltip({ active, payload }: TooltipProps<number, string>) {
         <div className="chart-tip-row"><i className="swatch swatch-dot" />Session e1RM<b className="mono">{lbs(p.e1rm, 1)}</b></div>
       )}
       {p.projected && p.band && (
-        <div className="chart-tip-row"><i className="swatch swatch-band" />Outlook<b className="mono">{lbs(p.band[0])}–{lbs(p.band[1])}</b></div>
+        <div className="chart-tip-row"><i className="swatch swatch-band" />80% range<b className="mono">{lbs(p.band[0])}–{lbs(p.band[1])}</b></div>
+      )}
+      {p.projected && p.median !== undefined && (
+        <div className="chart-tip-row"><i className="swatch swatch-median" />Median forecast<b className="mono">{lbs(p.median)}</b></div>
       )}
     </div>
   )
@@ -68,9 +72,9 @@ function TrajectoryChart({ exercise, data }: Props) {
     const band = onCurrent ? outlook.outlook_3mo_range_lbs : undefined
     if (band && outlook.current_smoothed_e1rm_lbs !== undefined && points.length) {
       const anchor = outlook.current_smoothed_e1rm_lbs
-      points[points.length - 1] = { ...points[points.length - 1], band: [anchor, anchor] }
+      points[points.length - 1] = { ...points[points.length - 1], band: [anchor, anchor], median: anchor }
       endT = lastT + 90 * DAY
-      points.push({ t: endT, band, projected: true })
+      points.push({ t: endT, band, median: outlook.outlook_3mo_median_lbs, projected: true })
     }
     // shade the window the plateau check actually compared across
     const plateauStartT = onCurrent && plateau.is_plateau && plateau.window_start ? parseDay(plateau.window_start) : undefined
@@ -92,7 +96,7 @@ function TrajectoryChart({ exercise, data }: Props) {
           <ul className="legend mono">
             <li><i className="swatch swatch-line" />Smoothed e1RM</li>
             <li><i className="swatch swatch-dot" />Session best</li>
-            {onCurrent && outlook.outlook_3mo_range_lbs && <li><i className="swatch swatch-band" />3-mo outlook</li>}
+            {onCurrent && outlook.outlook_3mo_range_lbs && <><li><i className="swatch swatch-band" />3-mo 80% range</li><li><i className="swatch swatch-median" />Median forecast</li></>}
             {plateauStartT !== undefined && <li><i className="swatch swatch-warn" />{plateau.status === 'declining' ? 'Decline' : 'Plateau'} window</li>}
           </ul>
         </div>
@@ -183,13 +187,14 @@ function TrajectoryChart({ exercise, data }: Props) {
             />
             <Tooltip content={<ChartTooltip />} cursor={{ stroke: dim, strokeDasharray: '2 3' }} />
             <Area dataKey="band" type="monotone" stroke={accent} strokeOpacity={0.6} strokeDasharray="4 4" fill="url(#bandHatch)" isAnimationActive={false} connectNulls />
+            <Line dataKey="median" stroke={accent} strokeWidth={1.5} strokeDasharray="2 4" dot={false} isAnimationActive={false} connectNulls />
             <Area dataKey="rolling" type="monotone" stroke={accent} strokeWidth={2.5} fill="url(#rollFill)" animationDuration={700} activeDot={{ r: 5, fill: accent, stroke: '#000', strokeWidth: 2 }} />
             <Line dataKey="e1rm" stroke="none" isAnimationActive={false} dot={{ r: 2.5, fill: dim, stroke: 'none' }} activeDot={{ r: 4, fill: '#fff' }} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
 
-      {onCurrent && outlook.range_basis && <p className="footnote">Outlook band: {outlook.range_basis}.</p>}
+      {onCurrent && outlook.range_basis && <p className="footnote">Forecast: {outlook.range_basis}.</p>}
     </section>
   )
 }
