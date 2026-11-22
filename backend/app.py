@@ -1,13 +1,12 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, model_validator
-import joblib
-import pandas as pd
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from features import REP_FEATURES, build_dataset
+from features import build_dataset
 from predict import check_plateau, long_term_outlook
+from rep_model import FEATURES as REP_MODEL_FEATURES, MAX_WEIGHT_CHANGE, RepModel, epley_reps, fit_personal
 
-rep_model = joblib.load("rep_model.joblib")
+DEFAULT_REP_MODEL = RepModel.load()
 
 app = FastAPI()
 
@@ -23,6 +22,30 @@ MAX_PLANNED_SETS = 10
 MAX_TARGET_REPS = 30
 
 
+class RepModelParams(BaseModel):
+    """A rep model as returned by /analyze, sent back so planning uses the lifter's own fit."""
+    mean: list[float] = Field(min_length=len(REP_MODEL_FEATURES), max_length=len(REP_MODEL_FEATURES))
+    scale: list[float] = Field(min_length=len(REP_MODEL_FEATURES), max_length=len(REP_MODEL_FEATURES))
+    coef: list[float] = Field(min_length=len(REP_MODEL_FEATURES), max_length=len(REP_MODEL_FEATURES))
+    intercept: float
+    source: str = 'personal'
+    n_sets: int = Field(default=0, ge=0)
+    features: list[str]
+    _model: RepModel | None = PrivateAttr(default=None)
+
+    @model_validator(mode='after')
+    def check_compatible(self):
+        self._model = RepModel.from_dict(self.model_dump())  # raises on a mismatched model
+        return self
+
+    def to_model(self):
+        return self._model
+
+
+def resolve_model(params):
+    return params.to_model() if params is not None else DEFAULT_REP_MODEL
+
+
 class PredictSetRequest(BaseModel):
     exercise: str
     weight: float = Field(gt=0)
@@ -30,6 +53,7 @@ class PredictSetRequest(BaseModel):
     set_number: int = Field(ge=1)
     prior_set_reps: float | None = Field(default=None, ge=0)
     prior_set_weight: float | None = Field(default=None, ge=0)
+    rep_model: RepModelParams | None = None
 
     @model_validator(mode='after')
     def check_prior_set_consistency(self):
@@ -51,6 +75,7 @@ class PlanSessionRequest(BaseModel):
     first_set_weight: float = Field(gt=0)
     target_min_reps: int = Field(ge=1, le=MAX_TARGET_REPS)
     target_max_reps: int = Field(ge=1, le=MAX_TARGET_REPS)
+    rep_model: RepModelParams | None = None
 
     @model_validator(mode='after')
     def check_rep_range(self):
@@ -58,26 +83,7 @@ class PlanSessionRequest(BaseModel):
             raise ValueError('target_min_reps cannot be greater than target_max_reps')
         return self
 
-SEARCH_BOUND_PCT = 0.20
-
-
-def epley_reps(weight, rolling_e1rm):
-    """Reps a fresh lifter could do at `weight`, from the Epley formula inverted."""
-    return 30 * (rolling_e1rm / weight - 1)
-
-
-def predict_reps(weight, set_number, prior_reps, prior_weight, rolling_e1rm):
-    """Ridge prediction for a later set, capped at what a fresh lifter could do.
-
-    The model's fatigue coefficients point the wrong way (good days inflate every set),
-    so uncapped it can ramp weight set over set past 100% of e1RM. A fatigued set
-    can't beat a fresh one, so the Epley value is a hard physical ceiling.
-    """
-    features = pd.DataFrame([[
-        weight, set_number, prior_reps, prior_weight, rolling_e1rm, weight / rolling_e1rm,
-    ]], columns=REP_FEATURES)
-    predicted = float(rep_model.predict(features)[0])
-    return max(0.0, min(predicted, epley_reps(weight, rolling_e1rm)))
+SEARCH_BOUND_PCT = MAX_WEIGHT_CHANGE  # search only where the model was trained
 
 
 def snap_to_plates(weight):
@@ -90,7 +96,8 @@ def weight_for_reps(rolling_e1rm, reps):
     return rolling_e1rm / (1 + reps / 30)
 
 
-def find_best_weight(prior_weight, prior_reps, rolling_e1rm, set_number, target_min, target_max):
+def find_best_weight(prior_weight, prior_reps, rolling_e1rm, set_number, target_min, target_max,
+                     model=DEFAULT_REP_MODEL):
     """Heaviest gym-loadable weight within 20% of the prior set that the model expects
     to land in the target range; otherwise the closest miss."""
     best_weight = None
@@ -109,7 +116,7 @@ def find_best_weight(prior_weight, prior_reps, rolling_e1rm, set_number, target_
         candidate = snapped - 5
 
     while candidate >= min_weight:
-        predicted_reps = predict_reps(candidate, set_number, prior_reps, prior_weight, rolling_e1rm)
+        predicted_reps = model.predict(candidate, set_number, prior_reps, prior_weight, rolling_e1rm)
 
         if target_min <= predicted_reps <= target_max:
             return candidate, round(predicted_reps)
@@ -141,6 +148,8 @@ def analyze(
         raise HTTPException(status_code=400, detail=str(e))
 
     e1rm_df = dataset["e1rm_df"]
+    # fit the rep model to this lifter (falls back to the default on short histories)
+    rep_model = fit_personal(dataset["usable_sets"], DEFAULT_REP_MODEL)
 
     results = {}
     for exercise in e1rm_df["exercise"].unique():
@@ -151,14 +160,17 @@ def analyze(
                 "date": row.date.strftime("%Y-%m-%d"),
                 "e1rm": float(row.e1rm),
                 "rolling_e1rm": float(row.rolling_e1rm),
+                "machine": int(row.machine),
             })
         results[exercise] = {
             "trajectory": trajectory,
+            "current_machine": int(history["machine"].iloc[-1]),
+            "machine_count": int(history["machine"].nunique()),
             "outlook": long_term_outlook(e1rm_df, exercise),
             "plateau": check_plateau(e1rm_df, exercise),
         }
 
-    return {"exercises": results}
+    return {"exercises": results, "rep_model": rep_model.to_dict()}
 
 @app.post("/predict-set")
 def predict_set(request: PredictSetRequest):
@@ -177,19 +189,21 @@ def predict_set(request: PredictSetRequest):
             "method": "formula",
         }
     else:
-        predicted_reps = predict_reps(
+        model = resolve_model(request.rep_model)
+        predicted_reps = model.predict(
             request.weight, request.set_number, request.prior_set_reps,
             request.prior_set_weight, request.rolling_e1rm,
         )
         return {
             "exercise": request.exercise,
             "predicted_reps": round(predicted_reps),
-            "method": "ridge_model",
+            "method": f"baseline_plus_correction ({model.source})",
         }
 
 
 @app.post("/plan-session")
 def plan_session(request: PlanSessionRequest):
+    model = resolve_model(request.rep_model)
     sets = []
 
     first_reps = max(0, round(epley_reps(request.first_set_weight, request.rolling_e1rm)))
@@ -216,7 +230,7 @@ def plan_session(request: PlanSessionRequest):
     for set_number in range(2, request.total_sets + 1):
         weight, reps = find_best_weight(
             prior_weight, prior_reps, request.rolling_e1rm, set_number,
-            request.target_min_reps, request.target_max_reps,
+            request.target_min_reps, request.target_max_reps, model,
         )
 
         if reps <= 0:
@@ -235,4 +249,4 @@ def plan_session(request: PlanSessionRequest):
         sets.append(set_entry)
         prior_weight, prior_reps = weight, reps
 
-    return {"exercise": request.exercise, "sets": sets}
+    return {"exercise": request.exercise, "sets": sets, "rep_model_source": model.source}

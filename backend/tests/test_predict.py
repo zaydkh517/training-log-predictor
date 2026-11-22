@@ -117,3 +117,25 @@ def test_noisy_falling_trend_never_projects_above_today():
     low, high = long_term_outlook(df, 'Bench Press (Barbell)')['outlook_3mo_range_lbs']
     assert high <= 147 + 1e-6
     assert low < high
+
+
+def _two_machine_history():
+    """Progressing on machine 0 (~300), then six flat weeks on machine 1 (~150)."""
+    first = _e1rm_history([280, 290, 300, 310, 320]).assign(machine=0)
+    second = _e1rm_history([150] * 6, start='2026-02-05').assign(machine=1)
+    return pd.concat([first, second], ignore_index=True)
+
+
+def test_plateau_is_judged_on_the_current_machine():
+    # against machine 0 this looks like a -50% collapse; on machine 1 it's simply flat
+    result = check_plateau(_two_machine_history(), 'Bench Press (Barbell)')
+    assert result['status'] == 'plateau'
+    assert result['percent_change'] == 0
+
+
+def test_new_machine_needs_its_own_sessions_for_an_outlook():
+    df = _two_machine_history()
+    df = df[df['date'] <= pd.Timestamp('2026-02-12')]  # only 2 sessions on machine 1
+    outlook = long_term_outlook(df, 'Bench Press (Barbell)')
+    assert 'new machine' in outlook['error']
+    assert outlook['current_smoothed_e1rm_lbs'] == 150

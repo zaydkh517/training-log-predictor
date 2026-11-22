@@ -148,3 +148,26 @@ def test_hevy_warmups_excluded(tmp_path):
                    + _hevy_row('warmup', 95, 10) + _hevy_row('normal', 185, 5))
     result = load_and_clean(hevy_path=csv)
     assert list(result['weight']) == [185]
+
+
+def test_machine_switch_and_return():
+    # gym A ~320, gym B ~160 (a different cable stack), then back to gym A
+    from features import assign_machines
+    ids = assign_machines([320, 315, 325, 160, 158, 162, 318, 330])
+    assert ids == [0, 0, 0, 1, 1, 1, 0, 0]
+
+
+def test_normal_progress_is_one_machine():
+    # a novice adding ~4% a session for 6 months, from 100 to over 1,000 lb of "e1RM": never a switch
+    from features import assign_machines
+    assert set(assign_machines([100 * 1.04 ** i for i in range(60)])) == {0}
+
+
+def test_rolling_average_stays_within_a_machine():
+    df = _sets([('2026-01-01', 'Triceps Pushdown', 270.0, 6),
+                ('2026-01-05', 'Triceps Pushdown', 270.0, 6),
+                ('2026-01-09', 'Triceps Pushdown', 120.0, 9)])
+    result = build_e1rm_df(df)
+    # the third session is a new machine: its rolling e1RM is its own, not averaged with 324
+    assert list(result['machine']) == [0, 0, 1]
+    assert result['rolling_e1rm'].iloc[-1] == round(120 * (1 + 9 / 30), 2)

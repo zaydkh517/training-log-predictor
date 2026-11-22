@@ -1,3 +1,6 @@
+import math
+from statistics import median
+
 import pandas as pd
 
 BODYWEIGHT_EXERCISES = [
@@ -36,8 +39,12 @@ HEVY_TO_CANONICAL = {
 KG_TO_LB = 2.20462
 MAX_RELIABLE_REPS = 12
 
-# inputs to the set-level rep model, in the order it was trained on
-REP_FEATURES = ['weight', 'set_number', 'prior_set_reps', 'prior_set_weight', 'rolling_e1rm', 'weight_pct_e1rm']
+# A session whose e1RM is under 60% (or over ~167%) of a machine's recent level can't be the
+# same machine: real strength never moves that much between sessions, but a different cable
+# stack or leg-extension machine easily does. Pounds on different machines aren't comparable.
+MACHINE_SWITCH_RATIO = 0.6
+MACHINE_LEVEL_SESSIONS = 3   # a machine's "recent level" is the median of its last 3 sessions
+
 
 
 def load_and_clean(strong_path=None, hevy_path=None):
@@ -126,9 +133,45 @@ def build_modeling_df(combined):
     return df[(df['weight'] > 0) & (df['reps'] > 0)].copy()
 
 
+def assign_machines(e1rms):
+    """Machine id (0, 1, 2...) for each session of one lift, in date order.
+
+    Each session joins the machine whose recent level it's consistent with -- preferring
+    the one used last time -- or starts a new machine if it matches none. Going back to an
+    earlier gym picks that machine's history back up instead of starting over.
+    """
+    recent = []      # per machine: its session e1RMs so far
+    ids = []
+    current = None
+
+    def distance(machine, value):
+        """How far `value` is from this machine's recent level (log ratio), or None if
+        it's too far to be the same machine."""
+        ratio = value / median(recent[machine][-MACHINE_LEVEL_SESSIONS:])
+        if MACHINE_SWITCH_RATIO <= ratio <= 1 / MACHINE_SWITCH_RATIO:
+            return abs(math.log(ratio))
+        return None
+
+    for value in e1rms:
+        if current is not None and distance(current, value) is not None:
+            machine = current
+        else:
+            fits = [(distance(m, value), m) for m in range(len(recent))]
+            fits = [(d, m) for d, m in fits if d is not None]
+            if fits:
+                machine = min(fits)[1]
+            else:
+                recent.append([])
+                machine = len(recent) - 1
+        recent[machine].append(value)
+        ids.append(machine)
+        current = machine
+    return ids
+
+
 def build_e1rm_df(modeling_df):
     """One e1RM per exercise per session -- the set with the highest Epley estimate --
-    plus a 28-day rolling average."""
+    tagged with the machine it was done on, plus a 28-day rolling average per machine."""
     df = modeling_df.copy()
     df['e1rm'] = (df['weight'] * (1 + df['reps'] / 30)).round(2)
 
@@ -136,16 +179,17 @@ def build_e1rm_df(modeling_df):
     df['reliable'] = df['reps'] <= MAX_RELIABLE_REPS
     df = df.sort_values(['date', 'exercise', 'reliable', 'e1rm'])
     e1rm_df = df.drop_duplicates(subset=['date', 'exercise'], keep='last').drop(columns='reliable')
-    e1rm_df = e1rm_df.sort_values(['exercise', 'date']).copy()
+    e1rm_df = e1rm_df.sort_values(['exercise', 'date']).reset_index(drop=True)
+    e1rm_df['machine'] = 0
+    e1rm_df['rolling_e1rm'] = 0.0
+    for _, lift in e1rm_df.groupby('exercise'):
+        e1rm_df.loc[lift.index, 'machine'] = assign_machines(lift['e1rm'].tolist())
 
-    rolling = (
-        e1rm_df.groupby('exercise')
-        .rolling('28D', on='date')['e1rm']
-        .mean()
-        .reset_index()
-        .rename(columns={'e1rm': 'rolling_e1rm'})
-    )
-    e1rm_df = e1rm_df.merge(rolling[['exercise', 'date', 'rolling_e1rm']], on=['exercise', 'date'], how='left')
+    # smooth within a machine only, so a switch doesn't drag the average through the gap
+    for _, sessions in e1rm_df.groupby(['exercise', 'machine']):
+        e1rm_df.loc[sessions.index, 'rolling_e1rm'] = (
+            sessions.rolling('28D', on='date')['e1rm'].mean().to_numpy()
+        )
     return e1rm_df
 
 
@@ -159,12 +203,15 @@ def build_rep_features(modeling_df, e1rm_df):
     df['set_volume'] = df['weight'] * df['reps']
     df['session_volume_so_far'] = df.groupby(['exercise', 'date'])['set_volume'].cumsum() - df['set_volume']
 
-    e1rm_lookup = e1rm_df[['exercise', 'date', 'rolling_e1rm']].sort_values('date')
+    # each set takes its session's machine, and its rolling e1RM from earlier sessions on that
+    # same machine (a different machine's pounds would make %-of-e1RM meaningless)
+    df = df.merge(e1rm_df[['exercise', 'date', 'machine']], on=['exercise', 'date'], how='left')
+    e1rm_lookup = e1rm_df[['exercise', 'machine', 'date', 'rolling_e1rm']].sort_values('date')
 
-    # merge_asof groups by exercise; both sides must be sorted by date overall
+    # merge_asof groups by exercise + machine; both sides must be sorted by date overall
     df = pd.merge_asof(
         df.sort_values('date'), e1rm_lookup,
-        on='date', by='exercise', direction='backward', allow_exact_matches=False,
+        on='date', by=['exercise', 'machine'], direction='backward', allow_exact_matches=False,
     )
     df = df.sort_values(['exercise', 'date', 'set_order']).reset_index(drop=True)
 
